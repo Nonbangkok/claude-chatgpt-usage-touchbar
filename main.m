@@ -16,6 +16,7 @@
 
 #import <Cocoa/Cocoa.h>
 #import "clawd_presets.h"
+#import "usage_model.h"
 #import <string.h>
 
 extern void DFRSystemModalShowsCloseBoxWhenFrontMost(BOOL show);
@@ -110,6 +111,9 @@ static int ClipForMood(Mood m, int previous) {
 @property (nonatomic) int p5, p7, resetMin, ageSec, scopedPct;
 @property (nonatomic, copy) NSString *scopedName;   // per-model weekly cap (e.g. Fable)
 @property (nonatomic, copy) NSString *state;   // ok | stale | expired | none
+@property (nonatomic) int codexP5, codexP7, codexResetMin, codexAgeSec;
+@property (nonatomic, copy) NSString *codexState;
+@property (nonatomic) BOOL codexHaveData;
 @property (nonatomic) CGFloat x, dir, phase;
 @property (nonatomic) BOOL haveData;
 @property (nonatomic) Act act;
@@ -128,6 +132,8 @@ static int ClipForMood(Mood m, int previous) {
 - (instancetype)initWithFrame:(NSRect)f {
     if ((self = [super initWithFrame:f])) {
         _x = 40; _dir = 1; _p5 = 0; _p7 = 0; _resetMin = -1;
+        _codexP5 = 0; _codexP7 = 0; _codexResetMin = -1;
+        _state = @"none"; _codexState = @"none";
         _act = ActWalk;
         _nextActAt = 4.0;
         _lastClipIdx = -1;
@@ -511,61 +517,31 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
 }
 
 - (void)drawReadout {
-    CGFloat h = NSHeight(self.bounds);
+    // Four fixed cells prevent a provider that has an extra model-specific
+    // cap from moving the other provider. The compact labels include reset
+    // time in the five-hour cell; stale and expired replace it with the state.
+    BOOL claudeReady = ![self.state isEqualToString:@"none"] && ![self.state isEqualToString:@"expired"];
+    BOOL codexReady = self.codexHaveData && ![self.codexState isEqualToString:@"expired"];
+    NSString *(^sessionLabel)(NSString *, NSString *, int, int) = ^NSString *(NSString *shortName, NSString *providerState, int reset, int age) {
+        if ([providerState isEqualToString:@"expired"]) return [shortName stringByAppendingString:@" login"];
+        if ([providerState isEqualToString:@"none"]) return [shortName stringByAppendingString:@" —"];
+        if ([providerState isEqualToString:@"stale"]) return [NSString stringWithFormat:@"%@ %dm", shortName, MAX(0, age / 60)];
+        return reset >= 0 ? [NSString stringWithFormat:@"%@ %dh", shortName, reset / 60] : shortName;
+    };
 
-    int p5 = MAX(0, MIN(100, self.p5)), p7 = MAX(0, MIN(100, self.p7));
-    BOOL dead = [self.state isEqualToString:@"expired"];
-    BOOL old  = [self.state isEqualToString:@"stale"];
+    NSArray *cells = @[
+        @[sessionLabel(@"C5", self.state, self.resetMin, self.ageSec), @(claudeReady ? self.p5 : -1)],
+        @[[self.state isEqualToString:@"expired"] ? @"C —" : @"C7", @(claudeReady ? self.p7 : -1)],
+        @[sessionLabel(@"G5", self.codexState, self.codexResetMin, self.codexAgeSec), @(codexReady ? self.codexP5 : -1)],
+        @[[self.codexState isEqualToString:@"expired"] ? @"G —" : @"G7", @(codexReady ? self.codexP7 : -1)],
+    ];
 
-    // An expired token means every number on screen is a fossil. Dimming them
-    // is not enough — replace the readout outright, and say what fixes it.
-    if (dead) {
-        NSDictionary *t = @{ NSFontAttributeName: [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold],
-                             NSForegroundColorAttributeName: [NSColor colorWithSRGBRed:1.0 green:0.45 blue:0.35 alpha:1.0] };
-        NSDictionary *s = @{ NSFontAttributeName: [NSFont monospacedSystemFontOfSize:10 weight:NSFontWeightRegular],
-                             NSForegroundColorAttributeName: [NSColor colorWithWhite:1.0 alpha:0.55] };
-        [@"token expired" drawAtPoint:NSMakePoint(READ_X, h - 16) withAttributes:t];
-        [@"claude -p hi" drawAtPoint:NSMakePoint(READ_X, 3) withAttributes:s];
-        return;
-    }
-
-    // Staleness is already stated in words by the amber badge, so the dimming
-    // only needs to be a hint. At 0.55 it dragged the labels to 2.9:1 — below
-    // the 4.5:1 floor, i.e. the state that says "do not trust this" was the
-    // one you could not read.
-    CGFloat dim = old ? 0.72 : 1.0;
-
-    // One cell per limit. The per-model cap only exists once it is being
-    // consumed, so the block is two or three cells wide and shares the width
-    // evenly — no cell is ever the runt with a number but no bar.
-    NSMutableArray *cells = [@[@[@"5h", @(p5)], @[@"7d", @(p7)]] mutableCopy];
-    if (self.scopedPct > 0 && self.scopedName.length) {
-        [cells addObject:@[self.scopedName, @(self.scopedPct)]];
-    }
-
-    NSInteger n = cells.count;
-    CGFloat cellW = (READ_W - CELL_GAP * (n - 1)) / n;
-    for (NSInteger i = 0; i < n; i++) {
+    CGFloat cellW = (READ_W - CELL_GAP * 3) / 4;
+    for (NSInteger i = 0; i < cells.count; i++) {
+        NSString *providerState = i < 2 ? self.state : self.codexState;
+        CGFloat dim = [providerState isEqualToString:@"stale"] ? 0.72 : 1.0;
         [self drawCell:cells[i][0] pct:[cells[i][1] intValue]
                      x:READ_X + i * (cellW + CELL_GAP) width:cellW dim:dim];
-    }
-
-    // The countdown belongs to the 5h window, so it sits beside that label
-    // rather than in a row of its own. Staleness takes the same slot when it
-    // applies — an old reading matters more than when the next one resets.
-    NSString *note = nil;
-    NSColor *noteColor = [NSColor colorWithWhite:1.0 alpha:0.55];
-    if (old) {
-        note = [NSString stringWithFormat:@"%dm old", self.ageSec / 60];
-        noteColor = [NSColor colorWithSRGBRed:1.0 green:0.78 blue:0.31 alpha:0.95];
-    } else if (self.resetMin >= 0) {
-        note = [NSString stringWithFormat:@"%dh%02d", self.resetMin / 60, self.resetMin % 60];
-    }
-    if (note) {
-        NSDictionary *at = @{ NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:8
-                                                                                    weight:NSFontWeightMedium],
-                              NSForegroundColorAttributeName: noteColor };
-        [note drawAtPoint:NSMakePoint(READ_X + 17, TEXT_Y + 1) withAttributes:at];
     }
 }
 
@@ -587,6 +563,7 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     // Code's own #B1B9F9 was the starting point and lost: hue 233 reads as
     // lavender and L84 washes out on a 30pt strip you glance at. A panel this
     // dim wants more saturation and less lightness than a terminal does.
+    BOOL unavailable = pct < 0;
     BOOL alarm = (pct >= 90);
     NSColor *ink;
     if (alarm)          ink = [NSColor colorWithSRGBRed:0.902 green:0.208 blue:0.180 alpha:1.0];  // #E6352E
@@ -598,8 +575,8 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     [label drawAtPoint:NSMakePoint(x, TEXT_Y) withAttributes:lb];
 
     // Every percentage is the same size and weight — one glance, one scale.
-    NSString *num = alarm ? [NSString stringWithFormat:@"%d%% !", pct]
-                          : [NSString stringWithFormat:@"%d%%", pct];
+    NSString *num = unavailable ? @"—" : (alarm ? [NSString stringWithFormat:@"%d%% !", pct]
+                                                : [NSString stringWithFormat:@"%d%%", pct]);
     NSDictionary *nu = @{ NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:12
                                                                                 weight:NSFontWeightBold],
                           NSForegroundColorAttributeName: [ink colorWithAlphaComponent:dim] };
@@ -609,7 +586,7 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     [[NSColor colorWithWhite:1.0 alpha:0.36 * dim] set];
     NSRectFill(NSMakeRect(x, BAR_Y, w, BAR_H));
 
-    CGFloat fillW = w * pct / 100.0;
+    CGFloat fillW = unavailable ? 0 : w * pct / 100.0;
     [[ink colorWithAlphaComponent:dim] set];
     NSRectFill(NSMakeRect(x, BAR_Y, fillW, BAR_H));
 
@@ -930,24 +907,31 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
             out = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
         }
 
-        NSArray<NSString *> *parts = [[out ?: @""
-            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
-            componentsSeparatedByString:@" "];
+        NSMutableDictionary<NSString *, UsageProvider *> *records = [NSMutableDictionary dictionary];
+        for (NSString *line in [(out ?: @"") componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+            UsageProvider *record = ParseUsageRecord(line);
+            if (record) records[record.name] = record;
+        }
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (parts.count >= 5) {
-                self.pet.p5 = parts[0].intValue;
-                self.pet.p7 = parts[1].intValue;
-                self.pet.resetMin = parts[2].intValue;
-                self.pet.ageSec = parts[3].intValue;
-                self.pet.state = parts[4];
-                // The API also reports a per-model weekly cap (kind=weekly_scoped).
-                // Only surface it once it is actually being consumed — at 0% it is
-                // noise on a 30pt strip.
-                self.pet.scopedPct  = (parts.count >= 6) ? parts[5].intValue : -1;
-                self.pet.scopedName = (parts.count >= 7) ? parts[6] : @"";
-                self.pet.haveData = ![parts[4] isEqualToString:@"none"];
+            UsageProvider *claude = records[@"claude"];
+            UsageProvider *codex = records[@"codex"];
+            if (claude) {
+                self.pet.p5 = claude.p5;
+                self.pet.p7 = claude.p7;
+                self.pet.resetMin = claude.resetMin;
+                self.pet.ageSec = claude.ageSec;
+                self.pet.state = claude.state;
             }
+            if (codex) {
+                self.pet.codexP5 = codex.p5;
+                self.pet.codexP7 = codex.p7;
+                self.pet.codexResetMin = codex.resetMin;
+                self.pet.codexAgeSec = codex.ageSec;
+                self.pet.codexState = codex.state;
+                self.pet.codexHaveData = codex.available;
+            }
+            self.pet.haveData = claude != nil || codex != nil;
             self.polling = NO;
         });
     });
@@ -973,6 +957,10 @@ static int RenderStates(NSString *dir) {
         @"06-stale":    @[@48, @31, @92,  @"stale",   @0,  @""],
         @"07-expired":  @[@48, @31, @-1,  @"expired", @0,  @""],
         @"08-zero":     @[@0,  @0,  @300, @"ok",      @0,  @""],
+        @"09-claude-codex": @[@26, @91, @125, @"ok", @0, @"", @18, @42, @44, @"ok"],
+        @"10-codex-stale": @[@26, @91, @125, @"ok", @0, @"", @18, @42, @44, @"stale"],
+        @"11-codex-expired": @[@26, @91, @125, @"ok", @0, @"", @0, @0, @-1, @"expired"],
+        @"12-claude-none": @[@0, @0, @-1, @"none", @0, @"", @18, @42, @44, @"ok"],
     };
     [NSFileManager.defaultManager createDirectoryAtPath:dir
                             withIntermediateDirectories:YES attributes:nil error:nil];
@@ -982,6 +970,13 @@ static int RenderStates(NSString *dir) {
         PetView *v = [[PetView alloc] initWithFrame:NSMakeRect(0, 0, kSceneW, kSceneH)];
         v.p5 = [s[0] intValue]; v.p7 = [s[1] intValue]; v.resetMin = [s[2] intValue];
         v.state = s[3]; v.scopedPct = [s[4] intValue]; v.scopedName = s[5];
+        if (s.count >= 10) {
+            v.codexP5 = [s[6] intValue]; v.codexP7 = [s[7] intValue];
+            v.codexResetMin = [s[8] intValue]; v.codexState = s[9];
+            v.codexAgeSec = 300;
+            v.codexHaveData = ![v.codexState isEqualToString:@"none"] &&
+                               ![v.codexState isEqualToString:@"expired"];
+        }
         v.ageSec = 300; v.haveData = YES; v.x = 60;
 
         // Two passes, and the order matters. drawRect: opens by filling itself

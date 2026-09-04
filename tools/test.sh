@@ -120,6 +120,11 @@ if "$PY" -m py_compile tools/extract-assets.py 2>/dev/null; then
   pass=$((pass+1)); echo "  ok    extract-assets.py compiles"
 else fail=$((fail+1)); echo "  FAIL  extract-assets.py does not compile"; fi
 
+if clang -fobjc-arc -framework Foundation -o /tmp/claude-touchbar-usage-model-test \
+    tools/usage-model-test.m usage_model.m 2>/dev/null && /tmp/claude-touchbar-usage-model-test; then
+  pass=$((pass+1)); echo "  ok    usage record model"
+else fail=$((fail+1)); echo "  FAIL  usage record model"; fi
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

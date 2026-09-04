@@ -29,11 +29,13 @@ assets:
 # A real bundle is required, not a bare binary: TouchBarServer keys Control Strip
 # items off the caller's bundle identity, and a bare binary reports (null) — the
 # item silently never appears.
-$(BIN): main.m clawd_presets.h Info.plist
+$(BIN): main.m usage_model.m usage_model.h clawd_presets.h Info.plist
 	mkdir -p $(BUNDLE)/Contents/MacOS
 	cp Info.plist $(BUNDLE)/Contents/Info.plist
-	clang $(FLAGS) -o $@ main.m
-	codesign --force --sign - $(BUNDLE)
+	clang $(FLAGS) -o $@ main.m usage_model.m
+	@# File-provider workspaces can add FinderInfo during bundle creation; clear
+	@# it immediately before signing, in the same shell, so it cannot reappear.
+	xattr -cr $(BUNDLE) && codesign --force --sign - $(BUNDLE)
 
 # Not a rule that builds it — just a readable failure when it is absent.
 clawd_presets.h:
