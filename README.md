@@ -1,18 +1,21 @@
-# claude-usage-touchbar
+# Claude + Codex Usage Touch Bar
 
-Your live Claude usage on the MacBook Pro Touch Bar, with a small pixel
-creature pacing along beside it.
+Your live Claude Code and Codex usage on the MacBook Pro Touch Bar, with a
+small pixel creature pacing alongside it.
 
 ![Clawd being dragged along the Touch Bar](docs/demo.gif)
 
 *Recorded with `make film-drag` — the widget's own animation loop, rendered
 headless. No screen was filmed.*
 
-The bars show the 5-hour and 7-day utilisation reported by Anthropic's own
-usage endpoint — the same numbers `/usage` prints in Claude Code. Tick marks
-sit at 50% and 90%. Colour and a `!` glyph both flag trouble, so the warning
-survives a red/green colour deficiency. A per-model cap (currently Fable)
-appears once it is actually being consumed.
+The four bars show Claude Code (C) and Codex (G) 5-hour and 7-day utilisation.
+The 5-hour label includes the time until its window resets. Tick marks sit at
+50% and 90%; colour and a `!` glyph both flag trouble, so the warning survives
+a red/green colour deficiency. `login`, `—`, and an age in minutes distinguish
+expired, unavailable, and stale provider data.
+
+This reports **Claude Code and Codex agentic allowances**, not general ChatGPT
+web-chat message caps or API billing usage.
 
 The creature's behaviour is the gauge too: it strolls when you are under 30%,
 picks up the pace past that, tires past 60%, and panics past 85%.
@@ -57,6 +60,8 @@ See [SECURITY.md](SECURITY.md) for exactly where the token goes.
 - macOS 12+ — developed and tested on macOS 26.4
 - Xcode Command Line Tools: `xcode-select --install`
 - Claude Code, signed in (`claude` in a terminal)
+- Codex CLI, signed in with the ChatGPT account whose Codex allowance you want
+  to show (`codex` in a terminal)
 - Node, **for the build only**: `brew install node`. It runs the pose data
   through its own engine once, at `make assets` time. Neither the widget nor
   the usage script uses it afterwards — those need nothing beyond what the
@@ -80,11 +85,12 @@ Check the script works on its own first:
 
 ```bash
 ~/bin/claude-touchbar.sh
-# 5h 26%  7d 91%   reset 2h05
+# Claude: 5h 26%  7d 91% (ok)
+# Codex:  5h 18%  7d 42% (ok)
 ```
 
-If it says `token expired`, run `claude -p hi` once — the CLI refreshes the
-token for you. No re-login, no prompt.
+If Claude says `expired`, run `claude -p hi` once. If Codex says `expired` or
+`none`, sign in again with `codex`.
 
 ### Why the poses are not in this repository
 
@@ -116,18 +122,23 @@ preferences, no keychain entry of its own.
 ## How it fits together
 
 ```
-~/bin/claude-touchbar.sh     keychain → API → cache → "5h 7d resetMin age state ..."
-        ↑ NSTask every 30s
-ClaudeTouchBar.app           draws the bars and the creature at 15fps
+Claude Keychain ─┐
+                ├─ ~/bin/claude-touchbar.sh ──> two provider records ──> Touch Bar UI
+Codex auth.json ─┘
+                     ↑ NSTask every 30s
 ```
 
 The split is deliberate: the GUI process holds no credentials and opens no
-sockets, so the part with network and keychain access is 100 lines of shell
-you can read in one sitting.
+sockets, so the part with network and keychain access stays small enough to
+audit in one sitting.
 
-The script reports one of four states — `ok`, `stale`, `expired`, `none` — and
-the widget renders each differently. An earlier version could not tell them
-apart and happily displayed three-hour-old numbers as though they were live.
+Each provider reports one of four states — `ok`, `stale`, `expired`, `none` —
+and the widget renders it independently. If Codex says `login` or `—`, sign in
+again with `codex`; if Claude says `login`, refresh with `claude -p hi`.
+
+Both providers use authenticated, undocumented usage endpoints which may change
+without notice. The widget treats malformed or unavailable responses as stale
+or unavailable rather than inventing a percentage.
 
 ## Building
 

@@ -1,9 +1,9 @@
 # Security
 
-This project reads an OAuth token out of your login keychain. That deserves a
-precise account rather than a reassuring one, so this document describes what
-the code actually does and points at the lines that do it. If any claim here
-does not match the source, that is a bug — please open an issue.
+This project reads the locally authenticated Claude Code and Codex credentials.
+That deserves a precise account rather than a reassuring one, so this document
+describes what the code actually does. If any claim here does not match the
+source, that is a bug — please open an issue.
 
 ## What is read, and by what
 
@@ -22,9 +22,13 @@ name `security`.
 From the returned JSON only `claudeAiOauth.accessToken` and
 `claudeAiOauth.expiresAt` are used. `refreshToken` is never read.
 
+For Codex, the script reads `${CODEX_HOME:-~/.codex}/auth.json` read-only. From
+that JSON it uses only `tokens.access_token` and optional `tokens.account_id`.
+It does not update the credential file or run a token refresh command.
+
 ## Where the token goes
 
-Exactly one place — the `Authorization` header of a single GET request:
+Claude's token goes to the `Authorization` header of this GET request:
 
 ```
 GET https://api.anthropic.com/api/oauth/usage
@@ -39,9 +43,16 @@ Handling, in order:
 4. It is never written to a file, never logged, never printed, never copied to
    the clipboard, and never passed to a child process's environment.
 
-There is no telemetry, no analytics, no crash reporting, and no second
-network destination. `api.anthropic.com` is the only host this project
-contacts at runtime. You can confirm that yourself:
+Codex's token and optional account ID go only to stdin-supplied request headers
+for this GET request:
+
+```
+GET https://chatgpt.com/backend-api/wham/usage
+```
+
+There is no telemetry, analytics, crash reporting, or third-party backend.
+The only runtime hosts are `api.anthropic.com` and `chatgpt.com`. You can
+confirm that yourself:
 
 ```sh
 grep -oE 'https?://[^ "]+' ~/bin/claude-touchbar.sh
@@ -54,11 +65,11 @@ Nothing, with respect to your credentials. `ClaudeTouchBar.app`:
 - never links `Security.framework` and never calls any keychain API
 - opens no sockets — it has no networking code at all
 - spawns exactly one subprocess: `/bin/bash -lc ~/bin/claude-touchbar.sh --raw`
-- parses six whitespace-separated numbers and strings from that output
+- parses two fixed-width provider records from that output
 
-The split exists so that the component with credential and network access is
-around 100 lines of shell you can audit in a sitting, rather than a compiled
-binary you have to take on trust.
+The split exists so that the component with credential and network access is a
+small shell script you can audit in a sitting, rather than a compiled binary
+you have to take on trust.
 
 ## The disk-cache hazard, and why it is not present here
 
@@ -80,15 +91,15 @@ this page.
 
 ## What is cached
 
-`/tmp/.claude-usage-$UID`, mode `0600`, containing six whitespace-separated
-values:
+`/tmp/.claude-usage-$UID` and `/tmp/.codex-usage-$UID`, both mode `0600`,
+contain only derived whitespace-separated values:
 
 ```
-<5h%> <7d%> <resetMinutes> <scopedPct> <scopedName> <unixTimestamp>
+<5h%> <7d%> <resetMinutes> <unixTimestamp>
 ```
 
-Percentages and a timestamp. No token, no identifier, nothing about you.
-Delete it whenever you like; it is rebuilt within a minute.
+Percentages and a timestamp. No token, account ID, or other identifier is
+cached. Delete either file whenever you like; it is rebuilt within a minute.
 
 ## Private API
 
