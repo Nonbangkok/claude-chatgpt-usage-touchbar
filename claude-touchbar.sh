@@ -158,9 +158,12 @@ except Exception:
   if [ -z "$ctok" ]; then
     cstate=none
   else
-    cheaders=$(printf 'Authorization: Bearer %s\n' "$ctok")
-    [ -n "$caccount" ] && cheaders="${cheaders}ChatGPT-Account-Id: ${caccount}\n"
-    cresp=$(printf '%b' "$cheaders" | curl -sS --max-time 6 -H @- \
+    # Command substitution trims the trailing newline, so explicitly restore it
+    # before appending the optional account header. Otherwise both headers merge
+    # and ChatGPT rejects the bearer token as malformed.
+    cheaders=$(printf 'Authorization: Bearer %s' "$ctok")
+    [ -n "$caccount" ] && cheaders="${cheaders}"$'\n'"ChatGPT-Account-Id: ${caccount}"
+    cresp=$(printf '%s\n' "$cheaders" | curl -sS --max-time 6 -H @- \
       -H 'Accept: application/json' -H 'User-Agent: codex-cli' \
       -w '\n%{http_code}' https://chatgpt.com/backend-api/wham/usage 2>/dev/null)
     unset ctok caccount cheaders
