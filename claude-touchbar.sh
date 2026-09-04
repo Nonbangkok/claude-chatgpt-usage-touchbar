@@ -135,7 +135,7 @@ CAGE=$(( $(date +%s) - ${CSTAMP:-0} ))
 
 if [ "${CSTAMP:-0}" -eq 0 ] || [ "$CAGE" -ge "$CTTL" ]; then
   CAUTH="${CODEX_HOME:-$HOME/.codex}/auth.json"
-  mapfile -t cparts < <("$PY" -c '
+  cparts=$("$PY" -c '
 import json, sys
 try:
     with open(sys.argv[1], encoding="utf-8") as f: data = json.load(f)
@@ -148,8 +148,12 @@ try:
 except Exception:
     pass
 ' "$CAUTH")
-  ctok="${cparts[0]:-}"
-  caccount="${cparts[1]:-}"
+  # macOS still ships Bash 3.2, which has no `mapfile`. Split the two-line
+  # result in-process so the bearer token never becomes a child argv/env value.
+  ctok=${cparts%%$'\n'*}
+  caccount=
+  [ "$cparts" != "$ctok" ] && caccount=${cparts#*$'\n'}
+  unset cparts
 
   if [ -z "$ctok" ]; then
     cstate=none
@@ -159,7 +163,7 @@ except Exception:
     cresp=$(printf '%b' "$cheaders" | curl -sS --max-time 6 -H @- \
       -H 'Accept: application/json' -H 'User-Agent: codex-cli' \
       -w '\n%{http_code}' https://chatgpt.com/backend-api/wham/usage 2>/dev/null)
-    unset ctok caccount cheaders cparts
+    unset ctok caccount cheaders
 
     ccode=$(printf '%s' "$cresp" | tail -1)
     if [ "$ccode" = 401 ] || [ "$ccode" = 403 ]; then
