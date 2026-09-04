@@ -14,13 +14,27 @@ PY=/usr/bin/python3
 
 # Pull the parser out of the script itself so the test exercises the shipped
 # code rather than a copy that can drift. Anchored on `parsed=$(` because the
-# script has more than one python invocation.
+# script has more than one Python invocation.
 SRC=$(awk '/parsed=\$\(/{f=1;next} f{ if(/^print\(f/){sub(/\x27\)$/,"");print;exit} print }' claude-touchbar.sh)
-[ -n "$SRC" ] || { echo "FAIL: could not extract the parser from claude-touchbar.sh"; exit 1; }
+[ -n "$SRC" ] || { echo "FAIL: could not extract the Claude parser from claude-touchbar.sh"; exit 1; }
+SRC_CODEX=$(awk '/# CODEX_PARSER_BEGIN/{f=1;next} /# CODEX_PARSER_END/{exit} f{print}' claude-touchbar.sh)
 
 pass=0 fail=0
 check() { # name, payload, expected ("*" matches any single field)
   local got; got=$(printf '%s' "$2" | "$PY" -c "$SRC" 2>/dev/null)
+  local ok=1 i
+  read -ra g <<< "$got"; read -ra w <<< "$3"
+  [ "${#g[@]}" = "${#w[@]}" ] || ok=0
+  for i in "${!w[@]}"; do
+    [ "${w[$i]}" = "*" ] && continue
+    [ "${g[$i]:-}" = "${w[$i]}" ] || ok=0
+  done
+  if [ "$ok" = 1 ]; then pass=$((pass+1)); printf '  ok    %s\n' "$1"
+  else fail=$((fail+1)); printf '  FAIL  %s\n         got      [%s]\n         expected [%s]\n' "$1" "$got" "$3"; fi
+}
+
+check_codex() { # name, payload, expected ("*" matches any single field)
+  local got; got=$(printf '%s' "$2" | "$PY" -c "$SRC_CODEX" 2>/dev/null)
   local ok=1 i
   read -ra g <<< "$got"; read -ra w <<< "$3"
   [ "${#g[@]}" = "${#w[@]}" ] || ok=0
@@ -72,6 +86,19 @@ check "unparseable resets_at -> -1" \
 check "valid resets_at -> a number" \
   '{"five_hour":{"utilization":5,"resets_at":"2030-01-01T00:00:00Z"}}' \
   "5 -1 * -1 -"
+
+# Codex may put either allowance in primary_window, so duration—not position—
+# is the contract. Reversing that classification would show a weekly burn in
+# the five-hour gauge, which is misleading even though both values are valid.
+check_codex "classifies windows by duration" \
+  '{"rate_limit":{"primary_window":{"used_percent":17,"reset_at":1893456000,"limit_window_seconds":18000},"secondary_window":{"used_percent":42,"reset_at":1894060800,"limit_window_seconds":604800}}}' \
+  "17 42 *"
+check_codex "weekly-only primary window" \
+  '{"rate_limit":{"primary_window":{"used_percent":42,"reset_at":1894060800,"limit_window_seconds":604800},"secondary_window":null}}' \
+  "-1 42 *"
+check_codex "rejects string percentages" \
+  '{"rate_limit":{"primary_window":{"used_percent":"17","reset_at":1893456000,"limit_window_seconds":18000}}}' \
+  "-1 -1 -1"
 
 # Malformed input must produce nothing at all, which the caller treats as stale
 # — printing a partial line would be read as a live measurement.

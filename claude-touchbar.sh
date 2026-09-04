@@ -112,22 +112,119 @@ print(f"{p5} {p7} {m} {sp} {sn}")')
   fi
 fi
 
-# A known cause beats "no data": report expired even with an empty cache,
-# otherwise a first run on a dead token looks like a first run on a fresh one.
+# Keep Claude's state independent: no Claude credential must prevent Codex from
+# being read. `none` is more useful than a fabricated zero when this is a first
+# run; `expired` still wins because it gives the user an actionable cause.
 if [ -z "${P5:-}" ]; then
-  [ "$state" = expired ] && { echo "0 0 -1 -1 expired"; exit 0; }
-  echo "0 0 -1 -1 none"; exit 0
+  P5=0; P7=0; RESET=-1; AGE=-1
+  [ "$state" = expired ] || state=none
+elif [ "$state" != ok ]; then
+  AGE=$(( $(date +%s) - ${STAMP:-0} ))
 fi
-[ "$state" = ok ] || AGE=$(( $(date +%s) - ${STAMP:-0} ))
+
+# Codex uses the ChatGPT plan token created by the Codex CLI. The usage endpoint
+# is undocumented, so everything below is deliberately defensive: a schema
+# change leaves this provider stale/none rather than inventing a percentage.
+CCACHE=/tmp/.codex-usage-$UID             # "5h 7d resetMin epoch"
+CTTL=60
+CP5=; CP7=; CRESET=-1; CSTAMP=0; CAGE=-1; cstate=ok
+if [ -f "$CCACHE" ]; then
+  read -r CP5 CP7 CRESET CSTAMP < "$CCACHE" 2>/dev/null || :
+fi
+CAGE=$(( $(date +%s) - ${CSTAMP:-0} ))
+
+if [ "${CSTAMP:-0}" -eq 0 ] || [ "$CAGE" -ge "$CTTL" ]; then
+  CAUTH="${CODEX_HOME:-$HOME/.codex}/auth.json"
+  mapfile -t cparts < <("$PY" -c '
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f: data = json.load(f)
+    tokens = data.get("tokens") or {}
+    token = tokens.get("access_token")
+    if isinstance(token, str) and token:
+        print(token)
+        account = tokens.get("account_id")
+        if isinstance(account, str): print(account)
+except Exception:
+    pass
+' "$CAUTH")
+  ctok="${cparts[0]:-}"
+  caccount="${cparts[1]:-}"
+
+  if [ -z "$ctok" ]; then
+    cstate=none
+  else
+    cheaders=$(printf 'Authorization: Bearer %s\n' "$ctok")
+    [ -n "$caccount" ] && cheaders="${cheaders}ChatGPT-Account-Id: ${caccount}\n"
+    cresp=$(printf '%b' "$cheaders" | curl -sS --max-time 6 -H @- \
+      -H 'Accept: application/json' -H 'User-Agent: codex-cli' \
+      -w '\n%{http_code}' https://chatgpt.com/backend-api/wham/usage 2>/dev/null)
+    unset ctok caccount cheaders cparts
+
+    ccode=$(printf '%s' "$cresp" | tail -1)
+    if [ "$ccode" = 401 ] || [ "$ccode" = 403 ]; then
+      cstate=expired
+    elif [ "$ccode" = 200 ]; then
+      cparsed=$(printf '%s' "$cresp" | sed '$d' | "$PY" -c '
+# CODEX_PARSER_BEGIN
+import json, sys, time
+try: j = json.load(sys.stdin)
+except Exception: sys.exit(0)
+
+rate_limit = j.get("rate_limit")
+if not isinstance(rate_limit, dict):
+    print("-1 -1 -1"); sys.exit(0)
+
+p5 = p7 = reset = -1
+for index, key in enumerate(("primary_window", "secondary_window")):
+    window = rate_limit.get(key)
+    if not isinstance(window, dict):
+        continue
+    percent = window.get("used_percent")
+    reset_at = window.get("reset_at")
+    duration = window.get("limit_window_seconds")
+    if isinstance(percent, bool) or not isinstance(percent, (int, float)):
+        continue
+    if isinstance(duration, bool) or not isinstance(duration, (int, float)):
+        is_weekly = index == 1
+    else:
+        is_weekly = duration >= 86400
+    if is_weekly:
+        p7 = round(percent)
+    else:
+        p5 = round(percent)
+        if isinstance(reset_at, (int, float)) and not isinstance(reset_at, bool):
+            reset = max(0, round((reset_at - time.time()) / 60))
+
+print(f"{p5} {p7} {reset}")
+# CODEX_PARSER_END
+')
+      case "$cparsed" in
+        ''|-1\ -1\ *) cstate=stale ;;
+        *) printf '%s %s\n' "$cparsed" "$(date +%s)" > "$CCACHE"; chmod 600 "$CCACHE"
+           read -r CP5 CP7 CRESET CSTAMP < "$CCACHE" 2>/dev/null || :
+           CAGE=0; cstate=ok ;;
+      esac
+    else
+      cstate=stale
+    fi
+  fi
+fi
+
+if [ -z "${CP5:-}" ]; then
+  CP5=0; CP7=0; CRESET=-1; CAGE=-1
+  [ "$cstate" = expired ] || cstate=none
+elif [ "$cstate" != ok ]; then
+  CAGE=$(( $(date +%s) - ${CSTAMP:-0} ))
+fi
 
 case "${1:-}" in
-  --raw) printf '%s %s %s %s %s %s %s\n' "$P5" "$P7" "$RESET" "$AGE" "$state" "${SP:--1}" "${SN:--}" ;;
+  --raw)
+    printf 'claude %s %s %s %s %s\n' "$P5" "$P7" "$RESET" "$AGE" "$state"
+    printf 'codex %s %s %s %s %s\n' "$CP5" "$CP7" "$CRESET" "$CAGE" "$cstate"
+    ;;
   *)
-     case "$state" in
-       expired) printf 'token expired — run: claude -p hi   (last: 5h %s%%  7d %s%%)\n' "$P5" "$P7" ;;
-       stale)   printf '5h %s%%  7d %s%%   (stale %dm)\n' "$P5" "$P7" $((AGE/60)) ;;
-       *)       printf '5h %s%%  7d %s%%' "$P5" "$P7"
-                [ "${SP:--1}" -gt 0 ] && printf '  %s %s%%' "${SN:--}" "$SP"
-                printf '   reset %dh%02d\n' $((RESET/60)) $((RESET%60)) ;;
-     esac ;;
+    printf 'Claude: 5h %s%%  7d %s%% (%s)\n' "$P5" "$P7" "$state"
+    printf 'Codex:  5h %s%%  7d %s%% (%s)\n' "$CP5" "$CP7" "$cstate"
+    ;;
 esac
