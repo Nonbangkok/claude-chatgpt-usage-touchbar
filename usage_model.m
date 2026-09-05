@@ -59,9 +59,13 @@ UsageProvider *DemoUsageProvider(NSString *name) {
     usage.state = @"ok";
     usage.available = YES;
     if ([name isEqualToString:@"claude"]) {
-        usage.p5 = 24; usage.p7 = 62; usage.resetMin = 147;
+        usage.p5 = 12 + (int)arc4random_uniform(35);   // 12-46%
+        usage.p7 = 38 + (int)arc4random_uniform(42);   // 38-79%
+        usage.resetMin = 45 + (int)arc4random_uniform(220);
     } else {
-        usage.p5 = 18; usage.p7 = 44; usage.resetMin = 203;
+        usage.p5 = 8 + (int)arc4random_uniform(38);    // 8-45%
+        usage.p7 = 28 + (int)arc4random_uniform(48);   // 28-75%
+        usage.resetMin = 45 + (int)arc4random_uniform(220);
     }
     usage.ageSec = 0;
     return usage;

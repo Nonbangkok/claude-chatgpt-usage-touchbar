@@ -40,10 +40,12 @@ int main(void) {
 
         UsageProvider *demoClaude = DemoUsageProvider(@"claude");
         UsageProvider *demoCodex = DemoUsageProvider(@"codex");
-        require(demoClaude.available && demoClaude.p5 == 24 && demoClaude.p7 == 62,
-                @"Claude Pro demo has a live-looking allowance");
-        require(demoCodex.available && demoCodex.p5 == 18 && demoCodex.p7 == 44,
-                @"ChatGPT Pro demo has a live-looking allowance");
+        require(demoClaude.available && demoClaude.p5 >= 12 && demoClaude.p5 <= 46 &&
+                demoClaude.p7 >= 38 && demoClaude.p7 <= 79,
+                @"Claude demo has a randomized live-looking allowance");
+        require(demoCodex.available && demoCodex.p5 >= 8 && demoCodex.p5 <= 45 &&
+                demoCodex.p7 >= 28 && demoCodex.p7 <= 75,
+                @"ChatGPT demo has a randomized live-looking allowance");
     }
     puts("usage model: ok");
     return 0;
