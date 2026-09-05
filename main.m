@@ -1151,6 +1151,10 @@ static int RenderFilm(NSString *dir, double secs) {
     PetView *v = [[PetView alloc] initWithFrame:NSMakeRect(0, 0, kSceneW, kSceneH)];
     v.p5 = 62; v.p7 = 61; v.resetMin = 93; v.scopedPct = 61; v.scopedName = @"Fable";
     v.state = @"ok"; v.haveData = YES; v.x = 60;
+    // Film output is illustrative sample data, but it must exercise both
+    // provider readouts so the README accurately demonstrates the widget.
+    v.codexP5 = 48; v.codexP7 = 57; v.codexResetMin = 126; v.codexAgeSec = 0;
+    v.codexState = @"ok"; v.codexHaveData = YES;
 
     int n = (int)(secs * kFPS);
     for (int i = 0; i < n; i++) {
@@ -1181,6 +1185,8 @@ static int RenderFilmDrag(NSString *dir) {
     PetView *v = [[PetView alloc] initWithFrame:NSMakeRect(0, 0, kSceneW, kSceneH)];
     v.p5 = 62; v.p7 = 61; v.resetMin = 93; v.scopedPct = 61; v.scopedName = @"Fable";
     v.state = @"ok"; v.haveData = YES; v.x = 90; v.dir = 1;
+    v.codexP5 = 48; v.codexP7 = 57; v.codexResetMin = 126; v.codexAgeSec = 0;
+    v.codexState = @"ok"; v.codexHaveData = YES;
 
     double dt = 1.0 / kFPS;
     __block int i = 0;

@@ -3,10 +3,10 @@
 Your live Claude Code and Codex usage on the MacBook Pro Touch Bar, with a
 small pixel creature pacing alongside it.
 
-![Clawd being dragged along the Touch Bar](docs/demo.gif)
+![Claude and Codex usage on the Touch Bar](docs/demo.gif)
 
-*Recorded with `make film-drag` — the widget's own animation loop, rendered
-headless. No screen was filmed.*
+*Recorded with `make film` — the widget's own animation loop, rendered
+headless. No screen was filmed. The animation uses illustrative sample data.*
 
 The four bars show Claude Code (C) and Codex (G) 5-hour and 7-day utilisation.
 The 5-hour label includes the time until its window resets. Tick marks sit at
