@@ -16,6 +16,7 @@
 
 #import <Cocoa/Cocoa.h>
 #import "clawd_presets.h"
+#import "mascot_physics.h"
 #import "usage_model.h"
 #import <string.h>
 
@@ -115,6 +116,7 @@ static int ClipForMood(Mood m, int previous) {
 @property (nonatomic, copy) NSString *codexState;
 @property (nonatomic) BOOL codexHaveData;
 @property (nonatomic) CGFloat x, dir, phase;
+@property (nonatomic) CGFloat gptX, gptDir, gptPhase, gptKick;
 @property (nonatomic) BOOL haveData;
 @property (nonatomic) Act act;
 @property (nonatomic) NSInteger clip;           // frame index within the clip
@@ -132,6 +134,7 @@ static int ClipForMood(Mood m, int previous) {
 - (instancetype)initWithFrame:(NSRect)f {
     if ((self = [super initWithFrame:f])) {
         _x = 40; _dir = 1; _p5 = 0; _p7 = 0; _resetMin = -1;
+        _gptX = 155; _gptDir = -1;
         _codexP5 = 0; _codexP7 = 0; _codexResetMin = -1;
         _state = @"none"; _codexState = @"none";
         _act = ActWalk;
@@ -208,6 +211,29 @@ static int ClipForMood(Mood m, int previous) {
     self.sinceAct = 0;
 }
 
+- (void)advanceGPT:(NSTimeInterval)dt mood:(Mood)m {
+    // GPT buddy has its own gentle patrol, driven by the Codex allowance. A
+    // short-lived kick carries the energy of a collision instead of making the
+    // two characters simply reverse in place.
+    CGFloat gptSpeed = 20.0 + MAX(0, self.codexP5) * 0.38;
+    CGFloat gptRight = READ_X - 22;
+    self.gptX += (self.gptDir * gptSpeed + self.gptKick) * dt;
+    self.gptKick *= 0.88;
+    if (self.gptX < 22) { self.gptX = 22; self.gptDir = 1; }
+    if (self.gptX > gptRight) { self.gptX = gptRight; self.gptDir = -1; }
+    self.gptPhase += dt * (gptSpeed / 11.0);
+
+    MascotPair pair = { self.x, self.dir * SpeedForMood(m),
+                        self.gptX, self.gptDir * gptSpeed + self.gptKick };
+    if (ResolveMascotCollision(&pair, 34.0)) {
+        self.x = pair.claudeX;
+        self.gptX = pair.gptX;
+        self.dir = pair.claudeVelocity < 0 ? -1 : 1;
+        self.gptDir = pair.gptVelocity < 0 ? -1 : 1;
+        self.gptKick = pair.gptVelocity - self.gptDir * gptSpeed;
+    }
+}
+
 - (void)advance:(NSTimeInterval)dt {
     Mood m = MoodForUsage(self.p5);
 
@@ -216,6 +242,7 @@ static int ClipForMood(Mood m, int previous) {
         // reads as a dragged icon; a struggling one reads as a creature.
         self.phase   += dt * 17.0;
         self.wiggleT += dt;
+        [self advanceGPT:dt mood:m];
         self.needsDisplay = YES;
         return;
     }
@@ -228,6 +255,7 @@ static int ClipForMood(Mood m, int previous) {
         if (self.x < lo) { self.x = lo; self.throwVX = -self.throwVX * 0.5; self.dir = 1; }
         if (self.x > hi) { self.x = hi; self.throwVX = -self.throwVX * 0.5; self.dir = -1; }
         self.phase += dt * (fabs(self.throwVX) / 9.0);
+        [self advanceGPT:dt mood:m];
         self.needsDisplay = YES;
         return;
     }
@@ -301,6 +329,8 @@ static int ClipForMood(Mood m, int previous) {
             }
         }
     }
+
+    [self advanceGPT:dt mood:m];
 
     self.needsDisplay = YES;
 }
@@ -406,6 +436,28 @@ static void DrawGrid(const unsigned char *g, NSPoint origin, CGFloat px,
     DrawGridPal(g, origin, px, flip, body, NULL, 0, CLAWD_TOP, CLAWD_BOT);
 }
 
+// The user-provided bot stays raster rather than being approximated with a
+// vector icon. Nearest-neighbour interpolation keeps its deliberately chunky
+// pixels crisp at Touch Bar size.
+static void DrawGPTMascot(CGFloat x, CGFloat phase) {
+    static NSImage *image;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSURL *url = [NSBundle.mainBundle URLForResource:@"GPTMascot" withExtension:@"png"];
+        image = [[NSImage alloc] initWithContentsOfURL:url];
+    });
+    if (!image) return;
+
+    NSGraphicsContext *context = NSGraphicsContext.currentContext;
+    NSImageInterpolation oldInterpolation = context.imageInterpolation;
+    context.imageInterpolation = NSImageInterpolationNone;
+    CGFloat bob = sin(phase * 2.0) * 0.7;
+    [image drawInRect:NSMakeRect(x - 15, 0.1 + bob, 30, 32.2)
+              fromRect:NSMakeRect(0, 0, image.size.width, image.size.height)
+             operation:NSCompositingOperationSourceOver fraction:1.0];
+    context.imageInterpolation = oldInterpolation;
+}
+
 - (void)drawRect:(NSRect)dirty {
     [NSColor.clearColor set];
     NSRectFill(dirty);
@@ -437,6 +489,10 @@ static void DrawGrid(const unsigned char *g, NSPoint origin, CGFloat px,
     // Ground line, like the reference art.
     [[NSColor colorWithWhite:1.0 alpha:0.14] set];
     NSRectFill(NSMakeRect(0, feet.y - 1.5, NSWidth(self.bounds), 1.0));
+
+    // Both characters occupy the same runway. Collision physics in advance:
+    // keeps their centres apart, so drawing order never hides a collision.
+    DrawGPTMascot(self.gptX, self.gptPhase);
 
     // Panic: motion streaks trailing behind.
     if (mood == MoodPanic) {

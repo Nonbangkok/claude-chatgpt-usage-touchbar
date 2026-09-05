@@ -125,6 +125,11 @@ if clang -fobjc-arc -framework Foundation -o /tmp/claude-touchbar-usage-model-te
   pass=$((pass+1)); echo "  ok    usage record model"
 else fail=$((fail+1)); echo "  FAIL  usage record model"; fi
 
+if clang -fobjc-arc -framework Foundation -o /tmp/claude-touchbar-mascot-physics-test \
+    tools/mascot-physics-test.m mascot_physics.m 2>/dev/null && /tmp/claude-touchbar-mascot-physics-test; then
+  pass=$((pass+1)); echo "  ok    mascot collision physics"
+else fail=$((fail+1)); echo "  FAIL  mascot collision physics"; fi
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
