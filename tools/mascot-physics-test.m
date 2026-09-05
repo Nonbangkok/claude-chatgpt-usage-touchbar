@@ -1,13 +1,5 @@
 #import <Foundation/Foundation.h>
-
-typedef struct {
-    double claudeX, claudeVelocity;
-    double gptX, gptVelocity;
-} MascotPair;
-
-BOOL ResolveMascotCollision(MascotPair *pair, double minimumDistance);
-typedef NS_ENUM(NSInteger, MascotTarget) { MascotTargetNone, MascotTargetClaude, MascotTargetGPT };
-MascotTarget MascotTargetAtPoint(double touchX, double claudeX, double gptX, double hitRadius);
+#import "../mascot_physics.h"
 
 static int failures = 0;
 
@@ -38,6 +30,20 @@ int main(void) {
               @"selects GPT inside its touch target");
         Check(MascotTargetAtPoint(95, 40, 150, 20) == MascotTargetNone,
               @"ignores touches between mascots");
+
+        Check([GPTMascotResourceForDirection(-1) isEqualToString:@"GPTMascot"],
+              @"uses the original GPT sprite before mirroring it left");
+        Check([GPTMascotResourceForDirection(1) isEqualToString:@"GPTMascot"],
+              @"keeps the existing GPT sprite when walking right");
+
+        GPTActivity activity = {NO, 0, 2.0};
+        Check(!AdvanceGPTActivity(&activity, 1.5) && !activity.resting,
+              @"keeps GPT walking before its activity interval ends");
+        Check(AdvanceGPTActivity(&activity, 0.6) && activity.resting,
+              @"moves GPT into an idle rest interval");
+        activity.duration = 1.0;
+        Check(AdvanceGPTActivity(&activity, 1.0) && !activity.resting,
+              @"resumes GPT walking after resting");
     }
     printf("mascot physics: %s\n", failures ? "failed" : "ok");
     return failures ? 1 : 0;

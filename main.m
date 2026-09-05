@@ -108,15 +108,19 @@ static int ClipForMood(Mood m, int previous) {
 }
 
 @interface PetView : NSView
-@property (nonatomic) int p5, p7, resetMin, ageSec, scopedPct;
+@property (nonatomic) int p5, p7, resetMin, reset7dMin, ageSec, scopedPct;
 @property (nonatomic, copy) NSString *scopedName;   // per-model weekly cap (e.g. Fable)
 @property (nonatomic, copy) NSString *state;   // ok | stale | expired | none
-@property (nonatomic) int codexP5, codexP7, codexResetMin, codexAgeSec;
+@property (nonatomic) int codexP5, codexP7, codexResetMin, codexReset7dMin, codexAgeSec;
 @property (nonatomic, copy) NSString *codexState;
 @property (nonatomic) BOOL codexHaveData;
 @property (nonatomic) BOOL demoMode;
 @property (nonatomic) CGFloat x, dir, phase;
 @property (nonatomic) CGFloat gptX, gptDir, gptPhase, gptKick;
+@property (nonatomic) GPTActivity gptActivity;
+@property (nonatomic) CGFloat claudeTapT, gptTapT;
+@property (nonatomic) NSInteger activeUsageCell;
+@property (nonatomic) CGFloat usageTapT;
 @property (nonatomic) BOOL haveData;
 @property (nonatomic) Act act;
 @property (nonatomic) NSInteger clip;           // frame index within the clip
@@ -125,7 +129,7 @@ static int ClipForMood(Mood m, int previous) {
 @property (nonatomic) CGFloat ballY, ballV;   // juggled ball: height above his head, velocity
 @property (nonatomic) BOOL dragging;
 @property (nonatomic) MascotTarget dragTarget;
-@property (nonatomic) CGFloat grabDX, dragVX, lastDragX, throwVX, wiggleT;
+@property (nonatomic) CGFloat grabDX, grabStartX, dragVX, lastDragX, throwVX, wiggleT;
 @property (nonatomic) CGFloat nextActAt;
 @property (nonatomic) NSInteger lastClipIdx, clipLoops;
 @end
@@ -134,9 +138,11 @@ static int ClipForMood(Mood m, int previous) {
 
 - (instancetype)initWithFrame:(NSRect)f {
     if ((self = [super initWithFrame:f])) {
-        _x = 40; _dir = 1; _p5 = 0; _p7 = 0; _resetMin = -1;
+        _x = 40; _dir = 1; _p5 = 0; _p7 = 0; _resetMin = -1; _reset7dMin = -1;
         _gptX = 155; _gptDir = -1;
-        _codexP5 = 0; _codexP7 = 0; _codexResetMin = -1;
+        _gptActivity = (GPTActivity){NO, 0, 3.6};
+        _activeUsageCell = -1;
+        _codexP5 = 0; _codexP7 = 0; _codexResetMin = -1; _codexReset7dMin = -1;
         _state = @"none"; _codexState = @"none";
         _act = ActWalk;
         _nextActAt = 4.0;
@@ -174,11 +180,26 @@ static int ClipForMood(Mood m, int previous) {
     // Both mascots get the same generous fingertip-sized hit target. If their
     // sprites are close after a collision, the nearest one wins predictably.
     MascotTarget target = MascotTargetAtPoint(tx, self.x, self.gptX, 34);
+    if (target == MascotTargetNone && tx >= READ_X) {
+        UsageProvider *claude = [UsageProvider new]; claude.state = self.state;
+        UsageProvider *codex = [UsageProvider new]; codex.state = self.codexState;
+        NSArray<NSString *> *visible = VisibleUsageProviderNames(claude, codex);
+        CGFloat cellW = (READ_W - CELL_GAP * (visible.count * 2 - 1)) / (visible.count * 2);
+        NSInteger index = (NSInteger)((tx - READ_X) / (cellW + CELL_GAP));
+        CGFloat cellStart = READ_X + index * (cellW + CELL_GAP);
+        if (index >= 0 && index < visible.count * 2 && tx <= cellStart + cellW) {
+            self.activeUsageCell = index;
+            self.usageTapT = 2.5;
+            self.needsDisplay = YES;
+        }
+        return;
+    }
     if (target != MascotTargetNone) {
         self.dragging = YES;
         self.dragTarget = target;
         CGFloat centre = target == MascotTargetClaude ? self.x : self.gptX;
         self.grabDX = tx - centre;
+        self.grabStartX = tx;
         self.dragVX = 0;
         self.lastDragX = tx;
         if (target == MascotTargetGPT) {
@@ -226,23 +247,38 @@ static int ClipForMood(Mood m, int previous) {
         self.throwVX = self.dragVX * 12.0;
         self.act = ActWalk;
     }
+    // A stationary release is a tap, not a throw. The brief sparkle gives the
+    // fingertip feedback without adding buttons or hiding usage data.
+    if (fabs(self.lastDragX - self.grabStartX) < 5.0) {
+        if (self.dragTarget == MascotTargetGPT) self.gptTapT = 0.65;
+        else self.claudeTapT = 0.65;
+    }
     self.dragTarget = MascotTargetNone;
     self.sinceAct = 0;
 }
 
 - (void)advanceGPT:(NSTimeInterval)dt mood:(Mood)m {
-    // GPT buddy has its own gentle patrol, driven by the Codex allowance. A
-    // short-lived kick carries the energy of a collision instead of making the
-    // two characters simply reverse in place.
-    CGFloat gptSpeed = 20.0 + MAX(0, self.codexP5) * 0.38;
+    // GPT takes irregular rests between patrols, so it has the same relaxed
+    // rhythm as Clawd rather than reading as a continuously scrolling icon.
+    // GPT stays just behind Clawd at every mood level; the two characters
+    // remain readable as a pair instead of GPT repeatedly overtaking him.
+    CGFloat gptSpeed = SpeedForMood(m) * 0.90;
     CGFloat gptRight = READ_X - 22;
+    GPTActivity activity = self.gptActivity;
+    if (AdvanceGPTActivity(&activity, dt)) {
+        activity.duration = activity.resting
+            ? 1.3 + (CGFloat)arc4random_uniform(180) / 100.0   // 1.3-3.1s rest
+            : 3.0 + (CGFloat)arc4random_uniform(500) / 100.0;  // 3-8s walk
+    }
+    self.gptActivity = activity;
+    BOOL moving = !activity.resting || fabs(self.gptKick) > 1.0;
     if (!(self.dragging && self.dragTarget == MascotTargetGPT)) {
-        self.gptX += (self.gptDir * gptSpeed + self.gptKick) * dt;
+        if (moving) self.gptX += (self.gptDir * gptSpeed + self.gptKick) * dt;
         self.gptKick *= 0.88;
         if (self.gptX < 22) { self.gptX = 22; self.gptDir = 1; }
         if (self.gptX > gptRight) { self.gptX = gptRight; self.gptDir = -1; }
     }
-    self.gptPhase += dt * (gptSpeed / 11.0);
+    self.gptPhase += dt * (moving ? gptSpeed / 11.0 : 0.7);
 
     MascotPair pair = { self.x, self.dir * SpeedForMood(m),
                         self.gptX, self.gptDir * gptSpeed + self.gptKick };
@@ -257,6 +293,10 @@ static int ClipForMood(Mood m, int previous) {
 
 - (void)advance:(NSTimeInterval)dt {
     Mood m = MoodForUsage(self.p5);
+    self.claudeTapT = MAX(0, self.claudeTapT - dt);
+    self.gptTapT = MAX(0, self.gptTapT - dt);
+    self.usageTapT = MAX(0, self.usageTapT - dt);
+    if (self.usageTapT <= 0) self.activeUsageCell = -1;
 
     if (self.dragging) {
         // Held: legs scrabble, body shakes. A limp sprite following a finger
@@ -460,7 +500,21 @@ static void DrawGrid(const unsigned char *g, NSPoint origin, CGFloat px,
 // The user-provided bot stays raster rather than being approximated with a
 // vector icon. Nearest-neighbour interpolation keeps its deliberately chunky
 // pixels crisp at Touch Bar size.
-static void DrawGPTMascot(CGFloat x, CGFloat phase) {
+static void DrawTapSparkles(CGFloat x, CGFloat t, NSColor *color) {
+    if (t <= 0) return;
+    CGFloat progress = 1.0 - t / 0.65;
+    CGFloat alpha = MIN(1.0, t * 2.4);
+    [[color colorWithAlphaComponent:alpha] set];
+    for (int i = 0; i < 4; i++) {
+        CGFloat angle = (CGFloat)i * M_PI_2 + progress * 0.6;
+        CGFloat radius = 7.0 + progress * 10.0;
+        CGFloat sx = x + cos(angle) * radius;
+        CGFloat sy = 18.0 + sin(angle) * radius * 0.55;
+        NSRectFill(NSMakeRect(sx - 1.0, sy - 1.0, 2.0, 2.0));
+    }
+}
+
+static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL resting, CGFloat tapT) {
     static NSImage *image;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -472,10 +526,21 @@ static void DrawGPTMascot(CGFloat x, CGFloat phase) {
     NSGraphicsContext *context = NSGraphicsContext.currentContext;
     NSImageInterpolation oldInterpolation = context.imageInterpolation;
     context.imageInterpolation = NSImageInterpolationNone;
-    CGFloat bob = sin(phase * 2.0) * 0.7;
-    [image drawInRect:NSMakeRect(x - 15, 0.1 + bob, 30, 32.2)
+    CGFloat bob = sin(phase * (resting ? 1.1 : 2.0)) * (resting ? 0.35 : 0.7);
+    DrawTapSparkles(x, tapT, [NSColor colorWithSRGBRed:0.37 green:0.70 blue:1.0 alpha:1.0]);
+    NSRect frame = NSMakeRect(x - 15, 0.1 + bob, 30, 32.2);
+    if (direction < 0) {
+        [context saveGraphicsState];
+        NSAffineTransform *mirror = NSAffineTransform.transform;
+        [mirror translateXBy:NSMidX(frame) yBy:0];
+        [mirror scaleXBy:-1 yBy:1];
+        [mirror translateXBy:-NSMidX(frame) yBy:0];
+        [mirror concat];
+    }
+    [image drawInRect:frame
               fromRect:NSMakeRect(0, 0, image.size.width, image.size.height)
              operation:NSCompositingOperationSourceOver fraction:1.0];
+    if (direction < 0) [context restoreGraphicsState];
     context.imageInterpolation = oldInterpolation;
 }
 
@@ -513,7 +578,7 @@ static void DrawGPTMascot(CGFloat x, CGFloat phase) {
 
     // Both characters occupy the same runway. Collision physics in advance:
     // keeps their centres apart, so drawing order never hides a collision.
-    DrawGPTMascot(self.gptX, self.gptPhase);
+    DrawGPTMascot(self.gptX, self.gptDir, self.gptPhase, self.gptActivity.resting, self.gptTapT);
 
     // Panic: motion streaks trailing behind.
     if (mood == MoodPanic) {
@@ -585,6 +650,9 @@ static void DrawGPTMascot(CGFloat x, CGFloat phase) {
         NSRectFill(NSMakeRect(self.x + 8, feet.y + CLAWD_ROWS * px * 0.9, 2.4, 3.4));
     }
 
+    DrawTapSparkles(self.x, self.claudeTapT,
+                    [NSColor colorWithSRGBRed:1.0 green:0.72 blue:0.43 alpha:1.0]);
+
     [self drawReadout];
 }
 
@@ -595,94 +663,112 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
 
 - (void)drawReadout {
     // Four fixed cells prevent a provider that has an extra model-specific
-    // cap from moving the other provider. The compact labels include reset
-    // time in the five-hour cell; stale and expired replace it with the state.
+    // cap from moving the other provider. Labels expand to human names when
+    // one provider is shown, and stay compact but explicit when both appear.
     BOOL claudeReady = ![self.state isEqualToString:@"none"] && ![self.state isEqualToString:@"expired"];
     BOOL codexReady = self.codexHaveData && ![self.codexState isEqualToString:@"expired"];
-    NSString *(^sessionLabel)(NSString *, NSString *, int, int) = ^NSString *(NSString *shortName, NSString *providerState, int reset, int age) {
-        if ([providerState isEqualToString:@"expired"]) return [shortName stringByAppendingString:@" login"];
-        if ([providerState isEqualToString:@"none"]) return [shortName stringByAppendingString:@" —"];
-        if ([providerState isEqualToString:@"stale"]) return [NSString stringWithFormat:@"%@ %dm", shortName, MAX(0, age / 60)];
-        return reset >= 0 ? [NSString stringWithFormat:@"%@ %dh", shortName, reset / 60] : shortName;
+    NSString *(^usageLabel)(NSString *, NSString *, NSString *) = ^NSString *(NSString *name, NSString *period, NSString *providerState) {
+        if ([providerState isEqualToString:@"expired"]) return [name stringByAppendingString:@" login"];
+        if ([providerState isEqualToString:@"none"]) return [name stringByAppendingString:@" —"];
+        if ([providerState isEqualToString:@"stale"]) return [name stringByAppendingString:@" stale"];
+        return [NSString stringWithFormat:@"%@ %@", name, period];
     };
 
     UsageProvider *claude = [UsageProvider new]; claude.state = self.state;
     UsageProvider *codex = [UsageProvider new]; codex.state = self.codexState;
     NSArray<NSString *> *visible = VisibleUsageProviderNames(claude, codex);
+    BOOL oneProvider = visible.count == 1;
+    NSString *claudeName = @"Claude";
+    NSString *codexName = oneProvider ? @"ChatGPT" : @"GPT";
     NSMutableArray<NSArray *> *cells = [NSMutableArray arrayWithCapacity:4];
     if ([visible containsObject:@"claude"]) {
-        [cells addObject:@[sessionLabel(@"C5", self.state, self.resetMin, self.ageSec),
-                          @(claudeReady ? self.p5 : -1), self.state]];
-        [cells addObject:@[[self.state isEqualToString:@"expired"] ? @"C —" : @"C7",
-                          @(claudeReady ? self.p7 : -1), self.state]];
+        [cells addObject:@[usageLabel(claudeName, @"5h", self.state),
+                          @(claudeReady ? self.p5 : -1), self.state, @(self.resetMin)]];
+        [cells addObject:@[usageLabel(claudeName, @"7d", self.state),
+                          @(claudeReady ? self.p7 : -1), self.state, @(self.reset7dMin)]];
     }
     if ([visible containsObject:@"codex"]) {
-        [cells addObject:@[sessionLabel(@"G5", self.codexState, self.codexResetMin, self.codexAgeSec),
-                          @(codexReady ? self.codexP5 : -1), self.codexState]];
-        [cells addObject:@[[self.codexState isEqualToString:@"expired"] ? @"G —" : @"G7",
-                          @(codexReady ? self.codexP7 : -1), self.codexState]];
+        [cells addObject:@[usageLabel(codexName, @"5h", self.codexState),
+                          @(codexReady ? self.codexP5 : -1), self.codexState, @(self.codexResetMin)]];
+        [cells addObject:@[usageLabel(codexName, @"7d", self.codexState),
+                          @(codexReady ? self.codexP7 : -1), self.codexState, @(self.codexReset7dMin)]];
     }
 
     CGFloat cellW = (READ_W - CELL_GAP * (cells.count - 1)) / cells.count;
     for (NSInteger i = 0; i < cells.count; i++) {
         NSString *providerState = cells[i][2];
         CGFloat dim = [providerState isEqualToString:@"stale"] ? 0.72 : 1.0;
+        BOOL selected = self.usageTapT > 0 && self.activeUsageCell == i;
+        NSString *label = selected ? UsageResetDisplay([cells[i][3] intValue]) : cells[i][0];
         [self drawCell:cells[i][0] pct:[cells[i][1] intValue]
-                     x:READ_X + i * (cellW + CELL_GAP) width:cellW dim:dim];
+                     x:READ_X + i * (cellW + CELL_GAP) width:cellW dim:dim
+                  effect:(selected ? self.usageTapT / 2.5 : 0) resetLabel:label];
     }
 }
 
-// A cell is label + percentage on one line, bar underneath, all cells identical.
-// Colour does NOT track the value: the bar's length already says how full it is,
-// and a green-to-red ramp restates that with invisible thresholds (why is 68%
-// green and 71% amber?). Colour is spent only on the one state that needs an
-// action — at or above 90% — so it reads as an alarm rather than decoration.
-- (void)drawCell:(NSString *)label pct:(int)pct x:(CGFloat)x width:(CGFloat)w dim:(CGFloat)dim {
-    // #B1B9F9 is the exact colour Claude Code fills its own /usage bars with —
-    // read off the escape codes it emits, not guessed. Amber and red take over
-    // as the window fills. Coral is deliberately absent: it is Clawd's, and at
-    // 1.08:1 against a warning red it could not carry a warning anyway.
-    //
-    // Thresholds are visible on the bar itself (ticks at 50 and 90), so a
-    // change of colour lands where the user can see why, and ">= 90" also
-    // prints "!" so the alarm never depends on colour vision alone.
-    // Picked on the Touch Bar itself via `--palette`, not from renders. Claude
-    // Code's own #B1B9F9 was the starting point and lost: hue 233 reads as
-    // lavender and L84 washes out on a 30pt strip you glance at. A panel this
-    // dim wants more saturation and less lightness than a terminal does.
+// A cell shows remaining allowance: label and value on one line, bar underneath.
+// The stored provider percentage remains "used" for mascot motion, but the
+// readout deliberately inverts it so the bar and the number answer "how much
+// can I still use?" without mental subtraction.
+- (void)drawCell:(NSString *)label pct:(int)pct x:(CGFloat)x width:(CGFloat)w dim:(CGFloat)dim
+           effect:(CGFloat)effect resetLabel:(NSString *)resetLabel {
     BOOL unavailable = pct < 0;
-    BOOL alarm = (pct >= 90);
+    int remaining = UsageRemainingPercent(pct);
+    UsageRemainingLevel level = UsageRemainingLevelForUsedPercent(pct);
     NSColor *ink;
-    if (alarm)          ink = [NSColor colorWithSRGBRed:0.902 green:0.208 blue:0.180 alpha:1.0];  // #E6352E
-    else if (pct >= 50) ink = [NSColor colorWithSRGBRed:0.949 green:0.706 blue:0.161 alpha:1.0];  // #F2B429
-    else                ink = [NSColor colorWithSRGBRed:0.173 green:0.533 blue:0.945 alpha:1.0];  // #2C88F1
+    if (level == UsageRemainingLevelCritical)
+        ink = [NSColor colorWithSRGBRed:0.902 green:0.208 blue:0.180 alpha:1.0];  // ≤10% left
+    else if (level == UsageRemainingLevelWarning)
+        ink = [NSColor colorWithSRGBRed:0.949 green:0.706 blue:0.161 alpha:1.0];  // ≤50% left
+    else
+        ink = [NSColor colorWithSRGBRed:0.173 green:0.533 blue:0.945 alpha:1.0];
 
-    NSDictionary *lb = @{ NSFontAttributeName: [NSFont systemFontOfSize:10 weight:NSFontWeightSemibold],
-                          NSForegroundColorAttributeName: [NSColor colorWithWhite:1.0 alpha:0.70 * dim] };
-    [label drawAtPoint:NSMakePoint(x, TEXT_Y) withAttributes:lb];
+    BOOL compact = w < 82;
+    CGFloat labelSize = effect > 0 ? 8.0 : (compact ? 7.0 : 10.0);
+    NSDictionary *lb = @{ NSFontAttributeName: [NSFont systemFontOfSize:labelSize weight:NSFontWeightSemibold],
+                          NSForegroundColorAttributeName: [NSColor colorWithWhite:1.0 alpha:(0.70 + effect * 0.30) * dim] };
+    [resetLabel drawAtPoint:NSMakePoint(x, TEXT_Y) withAttributes:lb];
 
-    // Every percentage is the same size and weight — one glance, one scale.
-    NSString *num = unavailable ? @"—" : (alarm ? [NSString stringWithFormat:@"%d%% !", pct]
-                                                : [NSString stringWithFormat:@"%d%%", pct]);
-    NSDictionary *nu = @{ NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:12
+    NSString *num = unavailable ? @"—" : UsageRemainingDisplay(pct);
+    NSDictionary *nu = @{ NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:(compact ? 8 : 12)
                                                                                 weight:NSFontWeightBold],
                           NSForegroundColorAttributeName: [ink colorWithAlphaComponent:dim] };
-    DrawRight(num, x + w, TEXT_Y - 1, nu);
+    if (!compact) DrawRight(num, x + w, TEXT_Y - 1, nu);
 
+    // The selected cell briefly grows upward and gains a soft halo. It is
+    // feedback for a fingertip, not a persistent fifth visual state.
+    CGFloat barH = BAR_H + effect * 3.0;
+    CGFloat barY = BAR_Y;
+    if (effect > 0) {
+        [[ink colorWithAlphaComponent:0.15 * effect] set];
+        NSRectFill(NSInsetRect(NSMakeRect(x, barY, w, barH), -2.0, -1.2));
+    }
     // The track is the 100% reference, not decoration — keep it readable.
     [[NSColor colorWithWhite:1.0 alpha:0.36 * dim] set];
-    NSRectFill(NSMakeRect(x, BAR_Y, w, BAR_H));
+    NSRectFill(NSMakeRect(x, barY, w, barH));
 
-    CGFloat fillW = unavailable ? 0 : w * pct / 100.0;
+    CGFloat fillW = unavailable ? 0 : w * remaining / 100.0;
     [[ink colorWithAlphaComponent:dim] set];
-    NSRectFill(NSMakeRect(x, BAR_Y, fillW, BAR_H));
+    NSRectFill(NSMakeRect(x, barY, fillW, barH));
 
-    // Ticks at 50 and 90 turn the bar into a scale, drawn only over the unfilled
-    // remainder — notches punched through a nearly-full bar read as breakage.
+    // Ticks at 50 and 90 turn the remaining-allowance bar into a scale.
     [[NSColor colorWithWhite:1.0 alpha:0.3 * dim] set];
     for (NSNumber *frac in @[@0.5, @0.9]) {
         CGFloat tx = w * frac.doubleValue;
-        if (tx > fillW) NSRectFill(NSMakeRect(x + tx, BAR_Y, 1, BAR_H));
+        if (tx > fillW) NSRectFill(NSMakeRect(x + tx, barY, 1, barH));
+    }
+
+    // Four limits leave a narrow cell. Keep the full provider/window label on
+    // its own line and print the longer "38% left" inside the bar, rather than
+    // squeezing the two strings until they overlap.
+    if (compact) {
+        NSShadow *shadow = [NSShadow new];
+        shadow.shadowColor = [NSColor colorWithWhite:0 alpha:0.9];
+        shadow.shadowOffset = NSMakeSize(0, -1);
+        NSDictionary *compactNum = @{ NSFontAttributeName: nu[NSFontAttributeName],
+                                      NSForegroundColorAttributeName: NSColor.whiteColor,
+                                      NSShadowAttributeName: shadow };
+        DrawRight(num, x + w - 2, barY - 0.5, compactNum);
     }
 }
 
@@ -897,10 +983,12 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
         UsageProvider *claude = DemoUsageProvider(@"claude");
         UsageProvider *codex = DemoUsageProvider(@"codex");
         self.pet.p5 = claude.p5; self.pet.p7 = claude.p7;
-        self.pet.resetMin = claude.resetMin; self.pet.ageSec = claude.ageSec;
+        self.pet.resetMin = claude.resetMin; self.pet.reset7dMin = claude.reset7dMin;
+        self.pet.ageSec = claude.ageSec;
         self.pet.state = claude.state;
         self.pet.codexP5 = codex.p5; self.pet.codexP7 = codex.p7;
-        self.pet.codexResetMin = codex.resetMin; self.pet.codexAgeSec = codex.ageSec;
+        self.pet.codexResetMin = codex.resetMin; self.pet.codexReset7dMin = codex.reset7dMin;
+        self.pet.codexAgeSec = codex.ageSec;
         self.pet.codexState = codex.state; self.pet.codexHaveData = YES;
         self.pet.haveData = YES; self.pet.demoMode = YES;
     }
@@ -1013,6 +1101,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
                 self.pet.p5 = claude.p5;
                 self.pet.p7 = claude.p7;
                 self.pet.resetMin = claude.resetMin;
+                self.pet.reset7dMin = claude.reset7dMin;
                 self.pet.ageSec = claude.ageSec;
                 self.pet.state = claude.state;
             }
@@ -1020,6 +1109,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
                 self.pet.codexP5 = codex.p5;
                 self.pet.codexP7 = codex.p7;
                 self.pet.codexResetMin = codex.resetMin;
+                self.pet.codexReset7dMin = codex.reset7dMin;
                 self.pet.codexAgeSec = codex.ageSec;
                 self.pet.codexState = codex.state;
                 self.pet.codexHaveData = codex.available;
@@ -1158,6 +1248,12 @@ static int RenderFilm(NSString *dir, double secs) {
 
     int n = (int)(secs * kFPS);
     for (int i = 0; i < n; i++) {
+        // The README film demonstrates the same bar press used in the live
+        // view, including the Codex five-hour countdown at the 7s mark.
+        if (i == (int)(7 * kFPS)) {
+            v.activeUsageCell = 2;
+            v.usageTapT = 2.5;
+        }
         [v advance:1.0 / kFPS];
         NSImage *layer = [[NSImage alloc] initWithSize:v.bounds.size];
         [layer lockFocus]; [v drawRect:v.bounds]; [layer unlockFocus];

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Claude usage for the Touch Bar widget.
 #
-# Prints: "<5h%> <7d%> <resetMin> <ageSec> <state>"
+# Prints: "<5h%> <7d%> <5hResetMin> <7dResetMin> <ageSec> <state>"
 #   state: ok      — fresh reading from the API
 #          stale   — API unreachable, showing the last good numbers
 #          expired — the OAuth token has expired; run `claude -p hi` to refresh
@@ -15,7 +15,7 @@
 # or a log — and is unset immediately after.
 set -uo pipefail
 
-CACHE=/tmp/.claude-usage-$UID          # "5h 7d resetMin scopedPct scopedName epoch"
+CACHE=/tmp/.claude-usage-$UID          # "5h 7d 5hReset 7dReset scopedPct scopedName epoch"
 TTL=60
 
 # /usr/bin/python3 ships with the Command Line Tools, which this project already
@@ -25,13 +25,18 @@ PY=/usr/bin/python3
 [ -x "$PY" ] || PY=$(command -v python3) || {
   echo "0 0 -1 -1 none"; exit 0; }
 
-read_cache() {                          # -> P5 P7 RESET SP SN STAMP
+read_cache() {                          # -> P5 P7 RESET RESET7 SP SN STAMP
   [ -f "$CACHE" ] || return 1
-  read -r P5 P7 RESET SP SN STAMP < "$CACHE" 2>/dev/null || :
+  read -r P5 P7 RESET RESET7 SP SN STAMP < "$CACHE" 2>/dev/null || :
+  # Version-one caches have no 7d reset. Keep their 5h data and treat the
+  # missing weekly reset as unavailable until the next API refresh.
+  if [ -z "${STAMP:-}" ]; then
+    STAMP=${SN:-0}; SN=${SP:--}; SP=${RESET7:--}; RESET7=-1
+  fi
   [ -n "${P5:-}" ]
 }
 
-P5=; P7=; RESET=-1; SP=-1; SN=-; STAMP=0
+P5=; P7=; RESET=-1; RESET7=-1; SP=-1; SN=-; STAMP=0
 read_cache || :
 AGE=$(( $(date +%s) - ${STAMP:-0} ))
 
@@ -90,17 +95,19 @@ for l in j.get("limits") or []:
         nm = ((l.get("scope") or {}).get("model") or {}).get("display_name")
         if nm: sn = re.sub(r"\s+", "", nm)
 
-m = -1
-t = (j.get("five_hour") or {}).get("resets_at")
-if t:
+def reset_min(window):
+    t = (window or {}).get("resets_at")
+    if not t: return -1
     try:
         # fromisoformat only learned to accept a trailing Z in 3.11.
         d = datetime.datetime.fromisoformat(t.replace("Z", "+00:00"))
-        m = max(0, round((d - datetime.datetime.now(d.tzinfo)).total_seconds() / 60))
+        return max(0, round((d - datetime.datetime.now(d.tzinfo)).total_seconds() / 60))
     except Exception:
-        pass
+        return -1
 
-print(f"{p5} {p7} {m} {sp} {sn}")')
+r5 = reset_min(j.get("five_hour"))
+r7 = reset_min(j.get("seven_day"))
+print(f"{p5} {p7} {r5} {r7} {sp} {sn}")')
       case "$parsed" in
         ''|-1\ -1\ *) state=stale ;;
         *) printf '%s %s\n' "$parsed" "$(date +%s)" > "$CACHE"; chmod 600 "$CACHE"
@@ -116,7 +123,7 @@ fi
 # being read. `none` is more useful than a fabricated zero when this is a first
 # run; `expired` still wins because it gives the user an actionable cause.
 if [ -z "${P5:-}" ]; then
-  P5=0; P7=0; RESET=-1; AGE=-1
+  P5=0; P7=0; RESET=-1; RESET7=-1; AGE=-1
   [ "$state" = expired ] || state=none
 elif [ "$state" != ok ]; then
   AGE=$(( $(date +%s) - ${STAMP:-0} ))
@@ -125,11 +132,12 @@ fi
 # Codex uses the ChatGPT plan token created by the Codex CLI. The usage endpoint
 # is undocumented, so everything below is deliberately defensive: a schema
 # change leaves this provider stale/none rather than inventing a percentage.
-CCACHE=/tmp/.codex-usage-$UID             # "5h 7d resetMin epoch"
+CCACHE=/tmp/.codex-usage-$UID             # "5h 7d 5hReset 7dReset epoch"
 CTTL=60
-CP5=; CP7=; CRESET=-1; CSTAMP=0; CAGE=-1; cstate=ok
+CP5=; CP7=; CRESET=-1; CRESET7=-1; CSTAMP=0; CAGE=-1; cstate=ok
 if [ -f "$CCACHE" ]; then
-  read -r CP5 CP7 CRESET CSTAMP < "$CCACHE" 2>/dev/null || :
+  read -r CP5 CP7 CRESET CRESET7 CSTAMP < "$CCACHE" 2>/dev/null || :
+  if [ -z "${CSTAMP:-}" ]; then CSTAMP=${CRESET7:-0}; CRESET7=-1; fi
 fi
 CAGE=$(( $(date +%s) - ${CSTAMP:-0} ))
 
@@ -180,9 +188,9 @@ except Exception: sys.exit(0)
 
 rate_limit = j.get("rate_limit")
 if not isinstance(rate_limit, dict):
-    print("-1 -1 -1"); sys.exit(0)
+    print("-1 -1 -1 -1"); sys.exit(0)
 
-p5 = p7 = reset = -1
+p5 = p7 = reset5 = reset7 = -1
 for index, key in enumerate(("primary_window", "secondary_window")):
     window = rate_limit.get(key)
     if not isinstance(window, dict):
@@ -198,18 +206,20 @@ for index, key in enumerate(("primary_window", "secondary_window")):
         is_weekly = duration >= 86400
     if is_weekly:
         p7 = round(percent)
+        if isinstance(reset_at, (int, float)) and not isinstance(reset_at, bool):
+            reset7 = max(0, round((reset_at - time.time()) / 60))
     else:
         p5 = round(percent)
         if isinstance(reset_at, (int, float)) and not isinstance(reset_at, bool):
-            reset = max(0, round((reset_at - time.time()) / 60))
+            reset5 = max(0, round((reset_at - time.time()) / 60))
 
-print(f"{p5} {p7} {reset}")
+print(f"{p5} {p7} {reset5} {reset7}")
 # CODEX_PARSER_END
 ')
       case "$cparsed" in
         ''|-1\ -1\ *) cstate=stale ;;
         *) printf '%s %s\n' "$cparsed" "$(date +%s)" > "$CCACHE"; chmod 600 "$CCACHE"
-           read -r CP5 CP7 CRESET CSTAMP < "$CCACHE" 2>/dev/null || :
+           read -r CP5 CP7 CRESET CRESET7 CSTAMP < "$CCACHE" 2>/dev/null || :
            CAGE=0; cstate=ok ;;
       esac
     else
@@ -219,7 +229,7 @@ print(f"{p5} {p7} {reset}")
 fi
 
 if [ -z "${CP5:-}" ]; then
-  CP5=0; CP7=0; CRESET=-1; CAGE=-1
+  CP5=0; CP7=0; CRESET=-1; CRESET7=-1; CAGE=-1
   [ "$cstate" = expired ] || cstate=none
 elif [ "$cstate" != ok ]; then
   CAGE=$(( $(date +%s) - ${CSTAMP:-0} ))
@@ -227,8 +237,8 @@ fi
 
 case "${1:-}" in
   --raw)
-    printf 'claude %s %s %s %s %s\n' "$P5" "$P7" "$RESET" "$AGE" "$state"
-    printf 'codex %s %s %s %s %s\n' "$CP5" "$CP7" "$CRESET" "$CAGE" "$cstate"
+    printf 'claude %s %s %s %s %s %s\n' "$P5" "$P7" "$RESET" "$RESET7" "$AGE" "$state"
+    printf 'codex %s %s %s %s %s %s\n' "$CP5" "$CP7" "$CRESET" "$CRESET7" "$CAGE" "$cstate"
     ;;
   *)
     printf 'Claude: 5h %s%%  7d %s%% (%s)\n' "$P5" "$P7" "$state"

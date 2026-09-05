@@ -32,3 +32,16 @@ MascotTarget MascotTargetAtPoint(double touchX, double claudeX, double gptX,
     if (claudeDistance > hitRadius && gptDistance > hitRadius) return MascotTargetNone;
     return claudeDistance <= gptDistance ? MascotTargetClaude : MascotTargetGPT;
 }
+
+BOOL AdvanceGPTActivity(GPTActivity *activity, double dt) {
+    if (!activity || dt <= 0 || activity->duration <= 0) return NO;
+    activity->elapsed += dt;
+    if (activity->elapsed < activity->duration) return NO;
+    activity->elapsed = 0;
+    activity->resting = !activity->resting;
+    return YES;
+}
+
+NSString *GPTMascotResourceForDirection(double direction) {
+    return @"GPTMascot";
+}
