@@ -37,10 +37,10 @@ $(BIN): main.m mascot_physics.m mascot_physics.h usage_model.m usage_model.h cla
 	@# File-provider workspaces can add FinderInfo during bundle creation; clear
 	@# it immediately before signing, in the same shell, so it cannot reappear.
 	@# File Provider may restore FinderInfo just after a new bundle is made.
-	@# Retrying immediately covers that race without accepting an unsigned app.
+	@# Let it settle, then clear it immediately before signing.
+	sleep 1
 	xattr -cr $(BUNDLE)
-	@codesign --force --sign - $(BUNDLE) 2>/dev/null || \
-	  (xattr -cr $(BUNDLE) && codesign --force --sign - $(BUNDLE))
+	codesign --force --sign - $(BUNDLE)
 
 # Not a rule that builds it — just a readable failure when it is absent.
 clawd_presets.h:
