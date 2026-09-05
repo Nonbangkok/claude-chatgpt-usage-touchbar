@@ -52,3 +52,17 @@ NSArray<NSString *> *VisibleUsageProviderNames(UsageProvider *claude, UsageProvi
     if (!codexExpired) [names addObject:@"codex"];
     return names;
 }
+
+UsageProvider *DemoUsageProvider(NSString *name) {
+    UsageProvider *usage = [UsageProvider new];
+    usage.name = name;
+    usage.state = @"ok";
+    usage.available = YES;
+    if ([name isEqualToString:@"claude"]) {
+        usage.p5 = 24; usage.p7 = 62; usage.resetMin = 147;
+    } else {
+        usage.p5 = 18; usage.p7 = 44; usage.resetMin = 203;
+    }
+    usage.ageSec = 0;
+    return usage;
+}

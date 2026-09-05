@@ -37,6 +37,13 @@ int main(void) {
         codex = ParseUsageRecord(@"codex 0 0 -1 -1 expired");
         require([VisibleUsageProviderNames(claude, codex) isEqualToArray:@[@"claude", @"codex"]],
                 @"keeps both providers visible when both expired");
+
+        UsageProvider *demoClaude = DemoUsageProvider(@"claude");
+        UsageProvider *demoCodex = DemoUsageProvider(@"codex");
+        require(demoClaude.available && demoClaude.p5 == 24 && demoClaude.p7 == 62,
+                @"Claude Pro demo has a live-looking allowance");
+        require(demoCodex.available && demoCodex.p5 == 18 && demoCodex.p7 == 44,
+                @"ChatGPT Pro demo has a live-looking allowance");
     }
     puts("usage model: ok");
     return 0;

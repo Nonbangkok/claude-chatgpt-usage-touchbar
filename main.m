@@ -114,6 +114,7 @@ static int ClipForMood(Mood m, int previous) {
 @property (nonatomic) int codexP5, codexP7, codexResetMin, codexAgeSec;
 @property (nonatomic, copy) NSString *codexState;
 @property (nonatomic) BOOL codexHaveData;
+@property (nonatomic) BOOL demoMode;
 @property (nonatomic) CGFloat x, dir, phase;
 @property (nonatomic) CGFloat gptX, gptDir, gptPhase, gptKick;
 @property (nonatomic) BOOL haveData;
@@ -610,15 +611,15 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     NSArray<NSString *> *visible = VisibleUsageProviderNames(claude, codex);
     NSMutableArray<NSArray *> *cells = [NSMutableArray arrayWithCapacity:4];
     if ([visible containsObject:@"claude"]) {
-        [cells addObject:@[sessionLabel(@"C5", self.state, self.resetMin, self.ageSec),
+        [cells addObject:@[self.demoMode ? @"C Pro" : sessionLabel(@"C5", self.state, self.resetMin, self.ageSec),
                           @(claudeReady ? self.p5 : -1), self.state]];
-        [cells addObject:@[[self.state isEqualToString:@"expired"] ? @"C —" : @"C7",
+        [cells addObject:@[self.demoMode ? @"C 7d" : ([self.state isEqualToString:@"expired"] ? @"C —" : @"C7"),
                           @(claudeReady ? self.p7 : -1), self.state]];
     }
     if ([visible containsObject:@"codex"]) {
-        [cells addObject:@[sessionLabel(@"G5", self.codexState, self.codexResetMin, self.codexAgeSec),
+        [cells addObject:@[self.demoMode ? @"G Pro" : sessionLabel(@"G5", self.codexState, self.codexResetMin, self.codexAgeSec),
                           @(codexReady ? self.codexP5 : -1), self.codexState]];
-        [cells addObject:@[[self.codexState isEqualToString:@"expired"] ? @"G —" : @"G7",
+        [cells addObject:@[self.demoMode ? @"G 7d" : ([self.codexState isEqualToString:@"expired"] ? @"G —" : @"G7"),
                           @(codexReady ? self.codexP7 : -1), self.codexState]];
     }
 
@@ -852,6 +853,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
 @property (nonatomic) BOOL paletteMode;
 @property (nonatomic) BOOL rulerMode;
 @property (nonatomic) BOOL sweatMode;
+@property (nonatomic) BOOL demoMode;
 @property (nonatomic, strong) NSTouchBar *bar;
 @property (nonatomic, strong) PetView *pet;
 @property (nonatomic, strong) NSTimer *frameTimer;
@@ -886,6 +888,17 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
     }
 
     self.pet = [[PetView alloc] initWithFrame:NSMakeRect(0, 0, kSceneW, kSceneH)];
+    if (self.demoMode) {
+        UsageProvider *claude = DemoUsageProvider(@"claude");
+        UsageProvider *codex = DemoUsageProvider(@"codex");
+        self.pet.p5 = claude.p5; self.pet.p7 = claude.p7;
+        self.pet.resetMin = claude.resetMin; self.pet.ageSec = claude.ageSec;
+        self.pet.state = claude.state;
+        self.pet.codexP5 = codex.p5; self.pet.codexP7 = codex.p7;
+        self.pet.codexResetMin = codex.resetMin; self.pet.codexAgeSec = codex.ageSec;
+        self.pet.codexState = codex.state; self.pet.codexHaveData = YES;
+        self.pet.haveData = YES; self.pet.demoMode = YES;
+    }
 
     self.bar = [NSTouchBar new];
     self.bar.delegate = self;
@@ -916,7 +929,8 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
     [NSDistributedNotificationCenter.defaultCenter
         addObserver:self selector:@selector(wake) name:@"com.apple.screenIsUnlocked" object:nil];
 
-    [self poll];
+    if (self.demoMode) NSLog(@"Claude Pro + ChatGPT Pro demo mode — no account data queried");
+    else [self poll];
 }
 
 - (void)present {
@@ -1255,6 +1269,7 @@ int main(int argc, const char **argv) {
         d.paletteMode = (argc == 2 && strcmp(argv[1], "--palette") == 0);
         d.rulerMode  = (argc == 2 && strcmp(argv[1], "--ruler") == 0);
         d.sweatMode  = (argc == 2 && strcmp(argv[1], "--sweat") == 0);
+        d.demoMode   = (argc == 2 && strcmp(argv[1], "--demo-pro") == 0);
         app.delegate = d;
         [app run];
     }

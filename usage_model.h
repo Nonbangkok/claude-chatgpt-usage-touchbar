@@ -15,5 +15,6 @@ NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT UsageProvider * _Nullable ParseUsageRecord(NSString *line);
 FOUNDATION_EXPORT NSArray<NSString *> *VisibleUsageProviderNames(UsageProvider *claude,
                                                                   UsageProvider *codex);
+FOUNDATION_EXPORT UsageProvider *DemoUsageProvider(NSString *name);
 
 NS_ASSUME_NONNULL_END
