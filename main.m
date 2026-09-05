@@ -869,6 +869,11 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     self.shell = dispatch_queue_create("local.claude-touchbar.shell", DISPATCH_QUEUE_SERIAL);
+    // LaunchServices can deliver the application-finished notification while
+    // it is still normalising launch arguments. Re-read the process arguments
+    // here so --demo-pro reaches the view even in an app-bundle launch.
+    self.demoMode = self.demoMode ||
+        [NSProcessInfo.processInfo.arguments containsObject:@"--demo-pro"];
 
     if (![NSTouchBar respondsToSelector:@selector(presentSystemModalTouchBar:placement:systemTrayItemIdentifier:)]) {
         NSLog(@"claude-touchbar: system-modal Touch Bar SPI missing — exiting.");
