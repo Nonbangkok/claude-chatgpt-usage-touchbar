@@ -38,3 +38,17 @@ UsageProvider *ParseUsageRecord(NSString *line) {
     usage.available = ![state isEqualToString:@"none"] && ![state isEqualToString:@"expired"];
     return usage;
 }
+
+NSArray<NSString *> *VisibleUsageProviderNames(UsageProvider *claude, UsageProvider *codex) {
+    BOOL claudeExpired = [claude.state isEqualToString:@"expired"];
+    BOOL codexExpired = [codex.state isEqualToString:@"expired"];
+    // When every provider needs authentication, keep both labels visible so
+    // the user knows to repair both accounts. Otherwise an expired provider
+    // only takes valuable Touch Bar space from a live one.
+    if (claudeExpired && codexExpired) return @[@"claude", @"codex"];
+
+    NSMutableArray<NSString *> *names = [NSMutableArray arrayWithCapacity:2];
+    if (!claudeExpired) [names addObject:@"claude"];
+    if (!codexExpired) [names addObject:@"codex"];
+    return names;
+}

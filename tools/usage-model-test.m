@@ -28,6 +28,15 @@ int main(void) {
         require([usage.name isEqualToString:@"claude"], @"Claude provider name is preserved");
         require(!usage.available && [usage.state isEqualToString:@"expired"],
                 @"expired record is unavailable and actionable");
+
+        UsageProvider *claude = ParseUsageRecord(@"claude 0 0 -1 -1 expired");
+        UsageProvider *codex = ParseUsageRecord(@"codex 18 42 44 0 ok");
+        require([VisibleUsageProviderNames(claude, codex) isEqualToArray:@[@"codex"]],
+                @"hides an expired provider when its peer is available");
+
+        codex = ParseUsageRecord(@"codex 0 0 -1 -1 expired");
+        require([VisibleUsageProviderNames(claude, codex) isEqualToArray:@[@"claude", @"codex"]],
+                @"keeps both providers visible when both expired");
     }
     puts("usage model: ok");
     return 0;

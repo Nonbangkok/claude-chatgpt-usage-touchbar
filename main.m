@@ -605,16 +605,26 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
         return reset >= 0 ? [NSString stringWithFormat:@"%@ %dh", shortName, reset / 60] : shortName;
     };
 
-    NSArray *cells = @[
-        @[sessionLabel(@"C5", self.state, self.resetMin, self.ageSec), @(claudeReady ? self.p5 : -1)],
-        @[[self.state isEqualToString:@"expired"] ? @"C —" : @"C7", @(claudeReady ? self.p7 : -1)],
-        @[sessionLabel(@"G5", self.codexState, self.codexResetMin, self.codexAgeSec), @(codexReady ? self.codexP5 : -1)],
-        @[[self.codexState isEqualToString:@"expired"] ? @"G —" : @"G7", @(codexReady ? self.codexP7 : -1)],
-    ];
+    UsageProvider *claude = [UsageProvider new]; claude.state = self.state;
+    UsageProvider *codex = [UsageProvider new]; codex.state = self.codexState;
+    NSArray<NSString *> *visible = VisibleUsageProviderNames(claude, codex);
+    NSMutableArray<NSArray *> *cells = [NSMutableArray arrayWithCapacity:4];
+    if ([visible containsObject:@"claude"]) {
+        [cells addObject:@[sessionLabel(@"C5", self.state, self.resetMin, self.ageSec),
+                          @(claudeReady ? self.p5 : -1), self.state]];
+        [cells addObject:@[[self.state isEqualToString:@"expired"] ? @"C —" : @"C7",
+                          @(claudeReady ? self.p7 : -1), self.state]];
+    }
+    if ([visible containsObject:@"codex"]) {
+        [cells addObject:@[sessionLabel(@"G5", self.codexState, self.codexResetMin, self.codexAgeSec),
+                          @(codexReady ? self.codexP5 : -1), self.codexState]];
+        [cells addObject:@[[self.codexState isEqualToString:@"expired"] ? @"G —" : @"G7",
+                          @(codexReady ? self.codexP7 : -1), self.codexState]];
+    }
 
-    CGFloat cellW = (READ_W - CELL_GAP * 3) / 4;
+    CGFloat cellW = (READ_W - CELL_GAP * (cells.count - 1)) / cells.count;
     for (NSInteger i = 0; i < cells.count; i++) {
-        NSString *providerState = i < 2 ? self.state : self.codexState;
+        NSString *providerState = cells[i][2];
         CGFloat dim = [providerState isEqualToString:@"stale"] ? 0.72 : 1.0;
         [self drawCell:cells[i][0] pct:[cells[i][1] intValue]
                      x:READ_X + i * (cellW + CELL_GAP) width:cellW dim:dim];
