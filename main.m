@@ -610,18 +610,13 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     UsageProvider *codex = [UsageProvider new]; codex.state = self.codexState;
     NSArray<NSString *> *visible = VisibleUsageProviderNames(claude, codex);
     NSMutableArray<NSArray *> *cells = [NSMutableArray arrayWithCapacity:4];
-    if (self.demoMode) {
-        // Demo intentionally never consults account state. Wide labelled cells
-        // make the illustrative status unmistakable in a screenshot.
-        [cells addObject:@[@"Claude Pro • DEMO", @(self.p5), self.state]];
-        [cells addObject:@[@"ChatGPT Pro • DEMO", @(self.codexP5), self.codexState]];
-    } else if ([visible containsObject:@"claude"]) {
+    if ([visible containsObject:@"claude"]) {
         [cells addObject:@[sessionLabel(@"C5", self.state, self.resetMin, self.ageSec),
                           @(claudeReady ? self.p5 : -1), self.state]];
         [cells addObject:@[[self.state isEqualToString:@"expired"] ? @"C —" : @"C7",
                           @(claudeReady ? self.p7 : -1), self.state]];
     }
-    if (!self.demoMode && [visible containsObject:@"codex"]) {
+    if ([visible containsObject:@"codex"]) {
         [cells addObject:@[sessionLabel(@"G5", self.codexState, self.codexResetMin, self.codexAgeSec),
                           @(codexReady ? self.codexP5 : -1), self.codexState]];
         [cells addObject:@[[self.codexState isEqualToString:@"expired"] ? @"G —" : @"G7",

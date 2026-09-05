@@ -1,5 +1,8 @@
 # Claude + Codex Usage Touch Bar
 
+> Demo media may use illustrative sample data; live values are shown only when
+> the corresponding Claude Code or Codex CLI account is authenticated.
+
 Your live Claude Code and Codex usage on the MacBook Pro Touch Bar, with a
 small pixel creature pacing alongside it.
 
