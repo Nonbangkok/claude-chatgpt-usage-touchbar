@@ -130,6 +130,10 @@ if clang -fobjc-arc -framework Foundation -o /tmp/claude-touchbar-mascot-physics
   pass=$((pass+1)); echo "  ok    mascot collision physics"
 else fail=$((fail+1)); echo "  FAIL  mascot collision physics"; fi
 
+if ! rg -q 'escapeKeyReplacementItemIdentifier|sendEscape:|local\\.claude-touchbar\\.esc' main.m; then
+  pass=$((pass+1)); echo "  ok    no replacement Escape key"
+else fail=$((fail+1)); echo "  FAIL  replacement Escape key is still present"; fi
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

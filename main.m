@@ -30,7 +30,6 @@ extern void DFRSystemModalShowsCloseBoxWhenFrontMost(BOOL show);
 @end
 
 static NSTouchBarItemIdentifier const kSceneID = @"local.claude-touchbar.scene";
-static NSTouchBarItemIdentifier const kEscID   = @"local.claude-touchbar.esc";
 static NSString *const kScript = @"~/bin/claude-touchbar.sh --raw";
 
 // Measured with `make ruler`, which draws ticks at fixed coordinates: the last
@@ -871,7 +870,6 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
         self.bar = [NSTouchBar new];
         self.bar.delegate = self;
         self.bar.defaultItemIdentifiers = @[kSceneID];
-        self.bar.escapeKeyReplacementItemIdentifier = kEscID;
         [self present];
         NSLog(@"palette mode — press Ctrl-C to exit");
         return;
@@ -882,8 +880,6 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
     self.bar = [NSTouchBar new];
     self.bar.delegate = self;
     self.bar.defaultItemIdentifiers = @[kSceneID];
-    // Keep Esc working — a presented bar otherwise covers the system one.
-    self.bar.escapeKeyReplacementItemIdentifier = kEscID;
 
     [self present];
 
@@ -934,22 +930,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
             it.view = self.pet;
         return it;
     }
-    if ([identifier isEqualToString:kEscID]) {
-        NSCustomTouchBarItem *it = [[NSCustomTouchBarItem alloc] initWithIdentifier:identifier];
-        it.view = [NSButton buttonWithTitle:@"esc" target:self action:@selector(sendEscape:)];
-        return it;
-    }
     return nil;
-}
-
-- (void)sendEscape:(id)sender {
-    // Posting to the system requires no special right for a plain key event.
-    CGEventRef down = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)53, true);
-    CGEventRef up   = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)53, false);
-    CGEventPost(kCGHIDEventTap, down);
-    CGEventPost(kCGHIDEventTap, up);
-    if (down) CFRelease(down);
-    if (up)   CFRelease(up);
 }
 
 - (void)frame {
