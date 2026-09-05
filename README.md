@@ -3,7 +3,7 @@
 Your live Claude Code and Codex usage on the MacBook Pro Touch Bar, with a
 small pixel creature pacing alongside it.
 
-![Claude and Codex usage on the Touch Bar](docs/demo.gif)
+![Claude and Codex usage with a transparent-background GPT mascot on the Touch Bar](docs/demo.gif)
 
 *Recorded with `make film` — the widget's own animation loop, rendered
 headless. No screen was filmed. The animation uses illustrative sample data.*
