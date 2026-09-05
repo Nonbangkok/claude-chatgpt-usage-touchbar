@@ -971,7 +971,13 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
 
     [self.pet advance:dt];
 
-    if (now - self.lastPoll >= 30.0) { self.lastPoll = now; [self poll]; }
+    // Demo values are intentionally isolated from real credentials. Without
+    // this guard the 30-second poll overwrites its Claude sample with the
+    // account's expired state after the demo first appears.
+    if (!self.demoMode && now - self.lastPoll >= 30.0) {
+        self.lastPoll = now;
+        [self poll];
+    }
 }
 
 - (void)poll {
