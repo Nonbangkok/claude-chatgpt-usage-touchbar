@@ -136,4 +136,7 @@ else fail=$((fail+1)); echo "  FAIL  replacement Escape key is still present"; f
 
 echo
 echo "$pass passed, $fail failed"
+if ! clang -fobjc-arc -framework Foundation -o /tmp/claude-touchbar-lens-test tools/lens-motion-test.m lens_motion.m || ! /tmp/claude-touchbar-lens-test; then
+  exit 1
+fi
 [ "$fail" = 0 ]

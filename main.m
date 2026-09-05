@@ -18,6 +18,7 @@
 #import "clawd_presets.h"
 #import "mascot_physics.h"
 #import "usage_model.h"
+#import "lens_motion.h"
 #import <string.h>
 
 extern void DFRSystemModalShowsCloseBoxWhenFrontMost(BOOL show);
@@ -121,6 +122,17 @@ static int ClipForMood(Mood m, int previous) {
 @property (nonatomic) CGFloat claudeTapT, gptTapT;
 @property (nonatomic) NSInteger activeUsageCell;
 @property (nonatomic) CGFloat usageTapT;
+@property (nonatomic, strong) UsageLens *lens;
+@property (nonatomic, copy) NSArray *lensCell;
+@property (nonatomic, copy) NSString *lensLayout;
+@property (nonatomic, strong) NSDate *lensResetDate;
+@property (nonatomic, strong) id lensTouchIdentity;
+@property (nonatomic) double lensAmbient;
+@property (nonatomic) NSUInteger nearResetMask;
+@property (nonatomic) double resetLookTime;
+- (NSArray<NSArray *> *)usageCells;
+- (BOOL)beginLensAt:(CGFloat)x;
+- (void)advanceLens:(double)dt;
 @property (nonatomic) BOOL haveData;
 @property (nonatomic) Act act;
 @property (nonatomic) NSInteger clip;           // frame index within the clip
@@ -142,6 +154,7 @@ static int ClipForMood(Mood m, int previous) {
         _gptX = 155; _gptDir = -1;
         _gptActivity = (GPTActivity){NO, 0, 3.6};
         _activeUsageCell = -1;
+        _lens = [UsageLens new];
         _codexP5 = 0; _codexP7 = 0; _codexResetMin = -1; _codexReset7dMin = -1;
         _state = @"none"; _codexState = @"none";
         _act = ActWalk;
@@ -168,32 +181,57 @@ static int ClipForMood(Mood m, int previous) {
 - (BOOL)acceptsFirstResponder { return YES; }
 - (BOOL)acceptsFirstMouse:(NSEvent *)e { return YES; }
 
+- (BOOL)beginLensAt:(CGFloat)tx {
+    NSArray *cells = [self usageCells];
+    CGFloat w = (READ_W - CELL_GAP * (cells.count - 1)) / MAX(1, cells.count);
+    NSInteger i = (NSInteger)floor((tx - READ_X) / (w + CELL_GAP));
+    CGFloat start = READ_X + i * (w + CELL_GAP);
+    if (tx < READ_X || i < 0 || i >= cells.count || tx > start + w) return NO;
+    if ([cells[i][1] intValue] < 0) return NO;
+    self.lensCell = cells[i];
+    NSMutableArray *names = [NSMutableArray new];
+    for (NSArray *cell in cells) [names addObject:cell[0]];
+    self.lensLayout = [names componentsJoinedByString:@"|"];
+    int reset = [self.lensCell[3] intValue];
+    self.lensResetDate = reset < 0 ? nil : [NSDate dateWithTimeIntervalSinceNow:reset * 60.0];
+    [self.lens beginAt:tx minimum:start maximum:start + w];
+    self.activeUsageCell = -1; self.usageTapT = 0;
+    self.needsDisplay = YES;
+    return YES;
+}
+
+- (void)advanceLens:(double)dt {
+    BOOL visible = self.lens.visible;
+    [self.lens advance:dt];
+    self.lensAmbient += dt;
+    self.resetLookTime = MAX(0, self.resetLookTime - dt);
+    int reset[] = {self.resetMin, self.reset7dMin, self.codexResetMin, self.codexReset7dMin};
+    BOOL ready[] = {self.haveData && [self.state isEqualToString:@"ok"],
+                    self.codexHaveData && [self.codexState isEqualToString:@"ok"]};
+    NSUInteger near = 0;
+    for (int i = 0; i < 4; i++) if (ready[i / 2] && reset[i] > 0 && reset[i] <= 30) near |= 1 << i;
+    if (near & ~self.nearResetMask) self.resetLookTime = 0.9;
+    self.nearResetMask = near;
+    if (visible || self.lens.visible) self.needsDisplay = YES;
+}
+
 // Touch. A view must opt in to direct touches or it receives them only
 // sporadically — that inconsistency cost four rounds of testing to spot.
 - (void)touchesBeganWithEvent:(NSEvent *)e {
+    if (self.lens.touching || self.dragging) return;
     NSTouch *t = [e touchesMatchingPhase:NSTouchPhaseAny inView:self].anyObject
               ?: [e touchesMatchingPhase:NSTouchPhaseAny inView:nil].anyObject;
     if (!t) return;
     // Direct touches report a real point in the view. normalizedPosition and
     // deviceSize belong to indirect (trackpad) touches and raise here.
     CGFloat tx = [t locationInView:self].x;
+    if (tx >= READ_X) {
+        if ([self beginLensAt:tx]) self.lensTouchIdentity = t.identity;
+        return;
+    }
     // Both mascots get the same generous fingertip-sized hit target. If their
     // sprites are close after a collision, the nearest one wins predictably.
     MascotTarget target = MascotTargetAtPoint(tx, self.x, self.gptX, 34);
-    if (target == MascotTargetNone && tx >= READ_X) {
-        UsageProvider *claude = [UsageProvider new]; claude.state = self.state;
-        UsageProvider *codex = [UsageProvider new]; codex.state = self.codexState;
-        NSArray<NSString *> *visible = VisibleUsageProviderNames(claude, codex);
-        CGFloat cellW = (READ_W - CELL_GAP * (visible.count * 2 - 1)) / (visible.count * 2);
-        NSInteger index = (NSInteger)((tx - READ_X) / (cellW + CELL_GAP));
-        CGFloat cellStart = READ_X + index * (cellW + CELL_GAP);
-        if (index >= 0 && index < visible.count * 2 && tx <= cellStart + cellW) {
-            self.activeUsageCell = index;
-            self.usageTapT = 2.5;
-            self.needsDisplay = YES;
-        }
-        return;
-    }
     if (target != MascotTargetNone) {
         self.dragging = YES;
         self.dragTarget = target;
@@ -213,6 +251,15 @@ static int ClipForMood(Mood m, int previous) {
 }
 
 - (void)touchesMovedWithEvent:(NSEvent *)e {
+    if (self.lens.touching) {
+        for (NSTouch *touch in [e touchesMatchingPhase:NSTouchPhaseAny inView:self]) {
+            if ([touch.identity isEqual:self.lensTouchIdentity]) {
+                [self.lens moveTo:[touch locationInView:self].x];
+                self.needsDisplay = YES;
+            }
+        }
+        return;
+    }
     if (!self.dragging) return;
     NSTouch *t = [e touchesMatchingPhase:NSTouchPhaseAny inView:self].anyObject
               ?: [e touchesMatchingPhase:NSTouchPhaseAny inView:nil].anyObject;
@@ -233,8 +280,18 @@ static int ClipForMood(Mood m, int previous) {
     self.needsDisplay = YES;
 }
 
-- (void)touchesEndedWithEvent:(NSEvent *)e   { [self releaseDrag]; }
-- (void)touchesCancelledWithEvent:(NSEvent *)e { [self releaseDrag]; }
+- (void)touchesEndedWithEvent:(NSEvent *)e {
+    if (self.lens.touching) {
+        for (NSTouch *touch in [e touchesMatchingPhase:NSTouchPhaseEnded inView:self]) {
+            if ([touch.identity isEqual:self.lensTouchIdentity]) {
+                [self.lens end]; self.lensTouchIdentity = nil;
+            }
+        }
+    } else [self releaseDrag];
+}
+- (void)touchesCancelledWithEvent:(NSEvent *)e {
+    [self.lens cancel]; self.lensTouchIdentity = nil; [self releaseDrag];
+}
 
 - (void)releaseDrag {
     if (!self.dragging) return;
@@ -578,7 +635,7 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL rest
 
     // Both characters occupy the same runway. Collision physics in advance:
     // keeps their centres apart, so drawing order never hides a collision.
-    DrawGPTMascot(self.gptX, self.gptDir, self.gptPhase, self.gptActivity.resting, self.gptTapT);
+    DrawGPTMascot(self.gptX, self.resetLookTime > 0 ? 1 : self.gptDir, self.gptPhase, self.gptActivity.resting, self.gptTapT);
 
     // Panic: motion streaks trailing behind.
     if (mood == MoodPanic) {
@@ -661,7 +718,7 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     [s drawAtPoint:NSMakePoint(rightEdge - w, y) withAttributes:at];
 }
 
-- (void)drawReadout {
+- (NSArray<NSArray *> *)usageCells {
     // Four fixed cells prevent a provider that has an extra model-specific
     // cap from moving the other provider. Labels expand to human names when
     // one provider is shown, and stay compact but explicit when both appear.
@@ -694,6 +751,16 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
                           @(codexReady ? self.codexP7 : -1), self.codexState, @(self.codexReset7dMin)]];
     }
 
+    return cells;
+}
+
+- (void)drawReadout {
+    NSArray *cells = [self usageCells];
+    NSMutableArray *names = [NSMutableArray new];
+    for (NSArray *cell in cells) [names addObject:cell[0]];
+    if (self.lens.visible && ![self.lensLayout isEqualToString:[names componentsJoinedByString:@"|"]]) {
+        [self.lens cancel]; self.lensCell = nil;
+    }
     CGFloat cellW = (READ_W - CELL_GAP * (cells.count - 1)) / cells.count;
     for (NSInteger i = 0; i < cells.count; i++) {
         NSString *providerState = cells[i][2];
@@ -703,7 +770,155 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
         [self drawCell:cells[i][0] pct:[cells[i][1] intValue]
                      x:READ_X + i * (cellW + CELL_GAP) width:cellW dim:dim
                   effect:(selected ? self.usageTapT / 2.5 : 0) resetLabel:label];
+        int reset = [cells[i][3] intValue];
+        int used = [cells[i][1] intValue];
+        if ([providerState isEqualToString:@"ok"] && used >= 0 && reset > 0 && reset <= 30) {
+            CGFloat start = READ_X + i * (cellW + CELL_GAP);
+            CGFloat endOfFill = cellW * UsageRemainingPercent(used) / 100.0;
+            CGFloat progress = (1 - cos(fmod(self.lensAmbient, 5.0) / 5.0 * M_PI)) / 2;
+            CGFloat cx = start + endOfFill + (cellW - endOfFill) * progress;
+            [NSGraphicsContext saveGraphicsState];
+            NSRectClip(NSMakeRect(start, BAR_Y, cellW, BAR_H));
+            for (int j = 3; j >= 0; j--) {
+                [[NSColor colorWithWhite:1 alpha:(0.48 - j * 0.12) * sin(progress * M_PI)] set];
+                [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(cx - j * 1.6 - 0.6, BAR_Y + BAR_H - 1.8, 1.2, 1.2)] fill];
+            }
+            [NSGraphicsContext restoreGraphicsState];
+        }
     }
+    if (self.lens.visible && self.lensCell) [self drawUsageLens];
+}
+
+// The focus surface lives inside the actual 30pt Touch Bar. Text changes sides
+// to give the moving glass lens room; none of it is drawn above the hardware.
+- (void)drawUsageLens {
+    UsageLens *l = self.lens;
+    CGFloat a = MIN(1, l.amount);
+    if (a < 0.003) return;
+    int pct = [self.lensCell[1] intValue];
+    int remaining = UsageRemainingPercent(pct);
+    NSColor *tint = remaining <= 10
+        ? [NSColor colorWithSRGBRed:1 green:0.32 blue:0.34 alpha:1]
+        : remaining <= 50 ? [NSColor colorWithSRGBRed:1 green:0.76 blue:0.34 alpha:1]
+        : [NSColor colorWithSRGBRed:0.35 green:0.72 blue:1 alpha:1];
+    CGFloat cx = MAX(READ_X + 17, MIN(l.x, READ_X + READ_W - 17));
+    CGFloat cy = 15;
+    CGFloat r = 10.6 * MAX(0.15, l.amount);
+    CGFloat stretch = MIN(3.2, fabs(l.velocity) * 0.012);
+    NSRect glass = NSMakeRect(cx - r - stretch, cy - r, 2 * (r + stretch), 2 * r);
+    [NSGraphicsContext saveGraphicsState];
+    NSRectClip(NSMakeRect(READ_X - 2, 0, READ_W + 4, 30));
+    [[NSColor colorWithWhite:0 alpha:a * 0.985] set];
+    NSRectFill(NSMakeRect(READ_X - 2, 0, READ_W + 4, 30));
+    [[tint colorWithAlphaComponent:a * 0.12] set];
+    NSRectFill(NSMakeRect(READ_X + 7, 0.5, READ_W - 14, 1));
+    [[tint colorWithAlphaComponent:a * 0.5] set];
+    NSRectFill(NSMakeRect(READ_X + 7, 0.5, (READ_W - 14) * remaining / 100.0, 1));
+
+    // Colored bloom is deliberately behind glass and text.
+    for (int i = 5; i >= 1; i--) {
+        [[tint colorWithAlphaComponent:a * 0.016] set];
+        [[NSBezierPath bezierPathWithOvalInRect:NSInsetRect(glass, -i * 1.6, -i * 1.6)] fill];
+    }
+    if (l.scrubbing) {
+        for (int i = 5; i >= 1; i--) {
+            CGFloat tx = cx - l.velocity * 0.012 * i;
+            [[tint colorWithAlphaComponent:a * (0.075 - i * 0.010)] set];
+            [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(tx - 3, cy - 3, 6, 6)] fill];
+        }
+    }
+    if (l.rippleTime < 0.65) {
+        for (int i = 0; i < 2; i++) {
+            CGFloat p = MAX(0, l.rippleTime - i * 0.1) / 0.65;
+            CGFloat rr = r + 12 * p;
+            [[tint colorWithAlphaComponent:a * 0.30 * (1 - p)] set];
+            NSBezierPath *ripple = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(cx - rr, cy - rr * 0.55, rr * 2, rr * 1.1)];
+            ripple.lineWidth = 0.6; [ripple stroke];
+        }
+    }
+
+    NSBezierPath *shell = [NSBezierPath bezierPathWithOvalInRect:glass];
+    [NSGraphicsContext saveGraphicsState]; [shell addClip];
+    NSGradient *surface = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithWhite:0.22 alpha:a]
+                                                      endingColor:[NSColor colorWithWhite:0.025 alpha:a]];
+    [surface drawInRect:glass angle:270];
+    [[tint colorWithAlphaComponent:0.42 * a] set];
+    NSRectFill(NSMakeRect(glass.origin.x, glass.origin.y, glass.size.width,
+                          glass.size.height * remaining / 100.0));
+    NSBezierPath *reflection = [NSBezierPath bezierPath];
+    [reflection moveToPoint:NSMakePoint(cx - r + 3, cy + 4)];
+    [reflection curveToPoint:NSMakePoint(cx + r - 3, cy + 6)
+              controlPoint1:NSMakePoint(cx - 3, cy + r - 2)
+              controlPoint2:NSMakePoint(cx + 3, cy + r - 2)];
+    [[NSColor colorWithWhite:1 alpha:a * 0.4] set];
+    reflection.lineWidth = 0.8; [reflection stroke];
+    [NSGraphicsContext restoreGraphicsState];
+    [[tint colorWithAlphaComponent:a * 0.9] set]; shell.lineWidth = 0.75; [shell stroke];
+
+    if (l.holding) {
+        for (int i = 0; i < 3; i++) {
+            CGFloat angle = l.clock * (i == 1 ? -82 : 58 + i * 30) + i * 120;
+            NSBezierPath *arc = [NSBezierPath bezierPath];
+            [arc appendBezierPathWithArcWithCenter:NSMakePoint(cx, cy) radius:11.3 + i * 0.9
+                                       startAngle:angle endAngle:angle + 75];
+            [[tint colorWithAlphaComponent:a * (0.7 - i * 0.15)] set];
+            arc.lineWidth = 0.65; [arc stroke];
+        }
+    }
+    if (remaining <= 10) {
+        CGFloat beat = pow(MAX(0, sin(l.clock * M_PI * 2 / 2.5)), 6);
+        [[tint colorWithAlphaComponent:beat * a * 0.16] set]; [shell fill];
+    }
+    if (!l.touching && l.releaseTime >= 0 && l.releaseTime < 0.65) {
+        CGFloat p = l.releaseTime / 0.65;
+        for (int i = 0; i < 6; i++) {
+            CGFloat angle = i * M_PI / 3;
+            CGFloat dist = (1 - p) * 16;
+            [[tint colorWithAlphaComponent:a * (1 - p) * 0.65] set];
+            [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(cx + cos(angle) * dist - 0.7,
+                                                              cy + sin(angle) * dist * 0.55 - 0.7, 1.4, 1.4)] fill];
+        }
+    }
+    NSString *core = [NSString stringWithFormat:@"%d", remaining];
+    NSDictionary *coreStyle = @{NSFontAttributeName:[NSFont monospacedDigitSystemFontOfSize:9 weight:NSFontWeightBold],
+                                 NSForegroundColorAttributeName:[NSColor colorWithWhite:1 alpha:a]};
+    [core drawAtPoint:NSMakePoint(cx - [core sizeWithAttributes:coreStyle].width / 2, cy - 5.5) withAttributes:coreStyle];
+
+    BOOL textRight = cx < READ_X + READ_W / 2;
+    CGFloat textX = textRight ? cx + r + stretch + 12 : READ_X + 9;
+    CGFloat textW = textRight ? READ_X + READ_W - 6 - textX : cx - r - stretch - 12 - textX;
+    NSString *title = [NSString stringWithFormat:@"%@ · %d%% left", self.lensCell[0], remaining];
+    int reset = self.lensResetDate ? MAX(0, (int)ceil([self.lensResetDate timeIntervalSinceNow] / 60)) : -1;
+    NSString *detail = self.lensResetDate ? [@"resets in " stringByAppendingString:[UsageResetDisplay(reset) substringFromIndex:2]] : @"reset time unavailable";
+    if (l.holding && self.lensResetDate) {
+        NSDateFormatter *formatter = [NSDateFormatter new];
+        formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+        formatter.dateFormat = reset >= 24 * 60 ? @"d MMM HH:mm" : @"HH:mm";
+        detail = [@"reset at " stringByAppendingString:[formatter stringFromDate:self.lensResetDate]];
+    }
+    if (l.scrubbing && l.checkpoint >= 0) {
+        title = [title stringByAppendingFormat:@"   | %ld%% mark", (long)l.checkpoint];
+    }
+    [NSGraphicsContext saveGraphicsState];
+    NSRectClip(NSMakeRect(textX, 0, MAX(0, textW), 30));
+    for (int row = 0; row < 2; row++) {
+        NSString *s = row == 0 ? title : detail;
+        CGFloat fontSize = row == 0 ? 10.0 : 9.0;
+        NSMutableDictionary *style = [@{NSFontAttributeName:[NSFont systemFontOfSize:fontSize weight:row == 0 ? NSFontWeightSemibold : NSFontWeightMedium],
+                                       NSForegroundColorAttributeName:row == 0 ? [NSColor colorWithWhite:1 alpha:a] : [tint colorWithAlphaComponent:a * 0.86]} mutableCopy];
+        while ([s sizeWithAttributes:style].width > textW && fontSize > 7.5) {
+            fontSize -= 0.25;
+            style[NSFontAttributeName] = [NSFont systemFontOfSize:fontSize weight:NSFontWeightMedium];
+        }
+        [s drawAtPoint:NSMakePoint(textX, row == 0 ? 15 : 3.5) withAttributes:style];
+    }
+    [NSGraphicsContext restoreGraphicsState];
+    if (l.scrubbing) {
+        CGFloat mark = l.minimumX + (l.maximumX - l.minimumX) * l.checkpoint / 100.0;
+        [[tint colorWithAlphaComponent:a * (0.4 + 0.6 * l.checkpointPulse)] set];
+        NSRectFill(NSMakeRect(mark - 0.5, 0, 1, 2 + l.checkpointPulse * 2));
+    }
+    [NSGraphicsContext restoreGraphicsState];
 }
 
 // A cell shows remaining allowance: label and value on one line, bar underneath.
@@ -744,12 +959,23 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
         NSRectFill(NSInsetRect(NSMakeRect(x, barY, w, barH), -2.0, -1.2));
     }
     // The track is the 100% reference, not decoration — keep it readable.
-    [[NSColor colorWithWhite:1.0 alpha:0.36 * dim] set];
-    NSRectFill(NSMakeRect(x, barY, w, barH));
+    [[NSColor colorWithWhite:0.20 alpha:dim] set];
+    NSBezierPath *track = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(x, barY, w, barH) xRadius:3 yRadius:3];
+    [track fill];
 
     CGFloat fillW = unavailable ? 0 : w * remaining / 100.0;
-    [[ink colorWithAlphaComponent:dim] set];
-    NSRectFill(NSMakeRect(x, barY, fillW, barH));
+    if (fillW > 0) {
+        [NSGraphicsContext saveGraphicsState];
+        [track addClip];
+        NSRectClip(NSMakeRect(x, barY, fillW, barH));
+        NSColor *top = [ink blendedColorWithFraction:0.18 ofColor:NSColor.whiteColor];
+        NSGradient *gradient = [[NSGradient alloc] initWithStartingColor:[ink colorWithAlphaComponent:dim]
+                                                           endingColor:[top colorWithAlphaComponent:dim]];
+        [gradient drawInRect:NSMakeRect(x, barY, w, barH) angle:90];
+        [[NSColor colorWithWhite:1 alpha:0.15 * dim] set];
+        NSRectFill(NSMakeRect(x, barY + barH - 1, fillW, 0.5));
+        [NSGraphicsContext restoreGraphicsState];
+    }
 
     // Ticks at 50 and 90 turn the remaining-allowance bar into a scale.
     [[NSColor colorWithWhite:1.0 alpha:0.3 * dim] set];
@@ -948,6 +1174,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
 @property (nonatomic) NSTimeInterval lastFrame;
 @property (nonatomic) NSTimeInterval lastPoll;
 @property (nonatomic) BOOL polling, asleep;
+@property (nonatomic) double petFrameAccumulator;
 @end
 
 @implementation AppDelegate
@@ -1005,7 +1232,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
                                                                  reason:@"animate the Touch Bar pet"];
 
     self.lastFrame = NSDate.timeIntervalSinceReferenceDate;
-    self.frameTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / kFPS repeats:YES
+    self.frameTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0 repeats:YES
                                                         block:^(NSTimer *t) { [self frame]; }];
     // .common mode: default-mode timers stall inside menu/tracking loops.
     [NSRunLoop.mainRunLoop addTimer:self.frameTimer forMode:NSRunLoopCommonModes];
@@ -1030,8 +1257,8 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
     [NSTouchBar presentSystemModalTouchBar:self.bar placement:0 systemTrayItemIdentifier:nil];
 }
 
-- (void)sleep { self.asleep = YES; }
-- (void)wake  { self.asleep = NO; [self present]; }
+- (void)sleep { self.asleep = YES; [self.pet.lens cancel]; }
+- (void)wake  { self.asleep = NO; self.lastFrame = NSDate.timeIntervalSinceReferenceDate; [self present]; }
 
 - (nullable NSTouchBarItem *)touchBar:(NSTouchBar *)bar
                 makeItemForIdentifier:(NSTouchBarItemIdentifier)identifier {
@@ -1057,7 +1284,12 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
     NSTimeInterval dt = MIN(now - self.lastFrame, 0.25);   // clamp after a stall
     self.lastFrame = now;
 
-    [self.pet advance:dt];
+    [self.pet advanceLens:dt];
+    self.petFrameAccumulator += dt;
+    while (self.petFrameAccumulator >= 1.0 / kFPS) {
+        [self.pet advance:1.0 / kFPS];
+        self.petFrameAccumulator -= 1.0 / kFPS;
+    }
 
     // Demo values are intentionally isolated from real credentials. Without
     // this guard the 30-second poll overwrites its Claude sample with the
@@ -1235,7 +1467,7 @@ static int RenderShot(NSString *out, int p5, int p7, int resetMin, int ageSec,
 // `--film <dir> <seconds>`: run the real animation loop headless and write one
 // PNG per frame, so the widget can be turned into a GIF without filming a
 // screen. Uses the same advance:/drawRect: path as the live app.
-static int RenderFilm(NSString *dir, double secs) {
+static int RenderFilm(NSString *dir, double secs, BOOL lensFilm) {
     [NSFileManager.defaultManager createDirectoryAtPath:dir
                             withIntermediateDirectories:YES attributes:nil error:nil];
     PetView *v = [[PetView alloc] initWithFrame:NSMakeRect(0, 0, kSceneW, kSceneH)];
@@ -1245,16 +1477,34 @@ static int RenderFilm(NSString *dir, double secs) {
     // provider readouts so the README accurately demonstrates the widget.
     v.codexP5 = 48; v.codexP7 = 57; v.codexResetMin = 126; v.codexAgeSec = 0;
     v.codexState = @"ok"; v.codexHaveData = YES;
+    v.reset7dMin = 2 * 24 * 60 + 180; v.codexReset7dMin = 4 * 24 * 60 + 120;
 
-    int n = (int)(secs * kFPS);
+    double fps = lensFilm ? 60 : kFPS;
+    int n = (int)(secs * fps);
     for (int i = 0; i < n; i++) {
         // The README film demonstrates the same bar press used in the live
         // view, including the Codex five-hour countdown at the 7s mark.
-        if (i == (int)(7 * kFPS)) {
+        if (!lensFilm && i == (int)(7 * kFPS)) {
             v.activeUsageCell = 2;
             v.usageTapT = 2.5;
         }
-        [v advance:1.0 / kFPS];
+        if (lensFilm) {
+            // The same entry points as real fingers: tap, hold, scrub, release.
+            if (i == 36) [v beginLensAt:READ_X + 26];
+            if (i == 45) [v.lens end];
+            if (i == 138) [v beginLensAt:READ_X + 189];
+            if (i == 240) [v.lens end];
+            if (i == 300) [v beginLensAt:READ_X + 83];
+            if (i >= 306 && i <= 420) {
+                double t = (i - 306) / 114.0;
+                [v.lens moveTo:READ_X + 83 + (0.5 - 0.5 * cos(t * M_PI * 3)) * 57];
+            }
+            if (i == 421) [v.lens end];
+            if (i == 480) { v.p5 = 94; v.resetMin = 12; [v beginLensAt:READ_X + 28]; }
+            if (i == 564) [v.lens end];
+            [v advanceLens:1.0 / fps];
+            if (i % 4 == 0) [v advance:1.0 / kFPS];
+        } else [v advance:1.0 / kFPS];
         NSImage *layer = [[NSImage alloc] initWithSize:v.bounds.size];
         [layer lockFocus]; [v drawRect:v.bounds]; [layer unlockFocus];
         NSImage *img = [[NSImage alloc] initWithSize:v.bounds.size];
@@ -1268,7 +1518,7 @@ static int RenderFilm(NSString *dir, double secs) {
             writeToFile:[dir stringByAppendingPathComponent:
                          [NSString stringWithFormat:@"f%04d.png", i]] atomically:YES];
     }
-    printf("%d frames at %.0f fps -> %s\n", n, kFPS, dir.UTF8String);
+    printf("%d frames at %.0f fps -> %s\n", n, fps, dir.UTF8String);
     return 0;
 }
 
@@ -1366,7 +1616,11 @@ int main(int argc, const char **argv) {
         }
         if (argc == 4 && strcmp(argv[1], "--film") == 0) {
             [NSApplication sharedApplication];
-            return RenderFilm(@(argv[2]), atof(argv[3]));
+            return RenderFilm(@(argv[2]), atof(argv[3]), NO);
+        }
+        if (argc == 4 && strcmp(argv[1], "--film-lens") == 0) {
+            [NSApplication sharedApplication];
+            return RenderFilm(@(argv[2]), atof(argv[3]), YES);
         }
         if (argc == 3 && strcmp(argv[1], "--poses") == 0) {
             [NSApplication sharedApplication];

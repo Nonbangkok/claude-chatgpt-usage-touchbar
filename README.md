@@ -23,9 +23,16 @@ pick up the pace past that, tire past 60%, and panic past 85%. GPT alternates
 between walking and short idle rests; tap either mascot for a small sparkle,
 or drag and release it to toss it along the runway.
 
-Tap a usage bar to make it expand and reveal its live reset countdown. The
-five-hour windows show the provider-supplied time; a window without a supplied
-reset time shows `↻ —` rather than inventing one.
+Tap a usage bar to open a glass lens with remaining allowance and reset countdown.
+Drag within that bar to move the lens with soft spring motion; the 10/50/100%
+marks are visual references and never change your allowance. Hold for 0.45 seconds
+to reveal the local reset time, including the date for multi-day windows. Release
+to let the lens settle back. Unavailable reset times are shown explicitly.
+The lens draws at 60 fps while the mascots retain their original pacing cadence.
+
+Preview the gestures using illustrative sample data with
+`./ClaudeTouchBar.app/Contents/MacOS/ClaudeTouchBar --film-lens /tmp/lens-frames 10.5`
+(60 fps PNG sequence).
 
 ---
 
