@@ -40,7 +40,8 @@ $(BIN): main.m mascot_physics.m mascot_physics.h usage_model.m usage_model.h cla
 	@# Let it settle, then clear it immediately before signing.
 	sleep 1
 	xattr -cr $(BUNDLE)
-	codesign --force --sign - $(BUNDLE)
+	@codesign --force --sign - $(BUNDLE) 2>/dev/null || \
+	  (sleep 1 && xattr -cr $(BUNDLE) && codesign --force --sign - $(BUNDLE))
 
 # Not a rule that builds it — just a readable failure when it is absent.
 clawd_presets.h:
