@@ -1239,6 +1239,12 @@ static int RenderPoses(NSString *dir) {
     return 0;
 }
 
+static BOOL HasOption(int argc, const char **argv, const char *option) {
+    for (int i = 1; i < argc; i++)
+        if (strcmp(argv[i], option) == 0) return YES;
+    return NO;
+}
+
 int main(int argc, const char **argv) {
     @autoreleasepool {
         if (argc == 3 && strcmp(argv[1], "--film-drag") == 0) {
@@ -1269,7 +1275,9 @@ int main(int argc, const char **argv) {
         d.paletteMode = (argc == 2 && strcmp(argv[1], "--palette") == 0);
         d.rulerMode  = (argc == 2 && strcmp(argv[1], "--ruler") == 0);
         d.sweatMode  = (argc == 2 && strcmp(argv[1], "--sweat") == 0);
-        d.demoMode   = (argc == 2 && strcmp(argv[1], "--demo-pro") == 0);
+        // LaunchServices adds a -psn_* argument when `open --args` starts a
+        // macOS app, so this must not depend on argc being exactly two.
+        d.demoMode   = HasOption(argc, argv, "--demo-pro");
         app.delegate = d;
         [app run];
     }
