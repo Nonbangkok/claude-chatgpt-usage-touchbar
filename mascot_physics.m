@@ -23,3 +23,12 @@ BOOL ResolveMascotCollision(MascotPair *pair, double minimumDistance) {
     pair->gptVelocity = direction * kick;
     return YES;
 }
+
+MascotTarget MascotTargetAtPoint(double touchX, double claudeX, double gptX,
+                                 double hitRadius) {
+    if (hitRadius <= 0) return MascotTargetNone;
+    double claudeDistance = fabs(touchX - claudeX);
+    double gptDistance = fabs(touchX - gptX);
+    if (claudeDistance > hitRadius && gptDistance > hitRadius) return MascotTargetNone;
+    return claudeDistance <= gptDistance ? MascotTargetClaude : MascotTargetGPT;
+}

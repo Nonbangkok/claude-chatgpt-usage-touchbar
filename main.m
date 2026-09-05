@@ -124,6 +124,7 @@ static int ClipForMood(Mood m, int previous) {
 @property (nonatomic) NSTimeInterval clipT, sinceAct;
 @property (nonatomic) CGFloat ballY, ballV;   // juggled ball: height above his head, velocity
 @property (nonatomic) BOOL dragging;
+@property (nonatomic) MascotTarget dragTarget;
 @property (nonatomic) CGFloat grabDX, dragVX, lastDragX, throwVX, wiggleT;
 @property (nonatomic) CGFloat nextActAt;
 @property (nonatomic) NSInteger lastClipIdx, clipLoops;
@@ -170,13 +171,20 @@ static int ClipForMood(Mood m, int previous) {
     // Direct touches report a real point in the view. normalizedPosition and
     // deviceSize belong to indirect (trackpad) touches and raise here.
     CGFloat tx = [t locationInView:self].x;
-    // Grab only if the touch lands on him, with a generous margin: he is 39pt
-    // wide on a bar you hit with a fingertip.
-    if (fabs(tx - self.x) < 34) {
+    // Both mascots get the same generous fingertip-sized hit target. If their
+    // sprites are close after a collision, the nearest one wins predictably.
+    MascotTarget target = MascotTargetAtPoint(tx, self.x, self.gptX, 34);
+    if (target != MascotTargetNone) {
         self.dragging = YES;
-        self.grabDX = tx - self.x;
+        self.dragTarget = target;
+        CGFloat centre = target == MascotTargetClaude ? self.x : self.gptX;
+        self.grabDX = tx - centre;
         self.dragVX = 0;
         self.lastDragX = tx;
+        if (target == MascotTargetGPT) {
+            self.gptKick = 0;
+            return;
+        }
         self.act = ActClip;              // stop pacing while held
         self.clipIdx = 4;                // surprise
         self.clip = 0; self.clipT = 0; self.clipLoops = 2;
@@ -192,10 +200,15 @@ static int ClipForMood(Mood m, int previous) {
     CGFloat nx = tx - self.grabDX;
     self.dragVX = tx - self.lastDragX;   // for the throw
     self.lastDragX = tx;
-    // Same wall the pacing uses: he may not be parked on top of the readout.
-    CGFloat wall = READ_X - (CLAWD_N * 1.95) / 2.0 - 8;
-    self.x = MAX(20, MIN(nx, wall));
-    if (fabs(self.dragVX) > 0.5) self.dir = (self.dragVX > 0) ? 1 : -1;
+    if (self.dragTarget == MascotTargetGPT) {
+        self.gptX = MAX(22, MIN(nx, READ_X - 22));
+        if (fabs(self.dragVX) > 0.5) self.gptDir = self.dragVX > 0 ? 1 : -1;
+    } else {
+        // Same wall the pacing uses: he may not be parked on top of the readout.
+        CGFloat wall = READ_X - (CLAWD_N * 1.95) / 2.0 - 8;
+        self.x = MAX(20, MIN(nx, wall));
+        if (fabs(self.dragVX) > 0.5) self.dir = (self.dragVX > 0) ? 1 : -1;
+    }
     self.needsDisplay = YES;
 }
 
@@ -206,8 +219,14 @@ static int ClipForMood(Mood m, int previous) {
     if (!self.dragging) return;
     self.dragging = NO;
     // Throw: carry the flick into a slide that decays, instead of stopping dead.
-    self.throwVX = self.dragVX * 12.0;
-    self.act = ActWalk;
+    if (self.dragTarget == MascotTargetGPT) {
+        self.gptKick = self.dragVX * 12.0;
+        if (fabs(self.dragVX) > 0.5) self.gptDir = self.dragVX > 0 ? 1 : -1;
+    } else {
+        self.throwVX = self.dragVX * 12.0;
+        self.act = ActWalk;
+    }
+    self.dragTarget = MascotTargetNone;
     self.sinceAct = 0;
 }
 
@@ -217,10 +236,12 @@ static int ClipForMood(Mood m, int previous) {
     // two characters simply reverse in place.
     CGFloat gptSpeed = 20.0 + MAX(0, self.codexP5) * 0.38;
     CGFloat gptRight = READ_X - 22;
-    self.gptX += (self.gptDir * gptSpeed + self.gptKick) * dt;
-    self.gptKick *= 0.88;
-    if (self.gptX < 22) { self.gptX = 22; self.gptDir = 1; }
-    if (self.gptX > gptRight) { self.gptX = gptRight; self.gptDir = -1; }
+    if (!(self.dragging && self.dragTarget == MascotTargetGPT)) {
+        self.gptX += (self.gptDir * gptSpeed + self.gptKick) * dt;
+        self.gptKick *= 0.88;
+        if (self.gptX < 22) { self.gptX = 22; self.gptDir = 1; }
+        if (self.gptX > gptRight) { self.gptX = gptRight; self.gptDir = -1; }
+    }
     self.gptPhase += dt * (gptSpeed / 11.0);
 
     MascotPair pair = { self.x, self.dir * SpeedForMood(m),

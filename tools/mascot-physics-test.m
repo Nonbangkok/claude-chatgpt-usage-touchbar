@@ -6,6 +6,8 @@ typedef struct {
 } MascotPair;
 
 BOOL ResolveMascotCollision(MascotPair *pair, double minimumDistance);
+typedef NS_ENUM(NSInteger, MascotTarget) { MascotTargetNone, MascotTargetClaude, MascotTargetGPT };
+MascotTarget MascotTargetAtPoint(double touchX, double claudeX, double gptX, double hitRadius);
 
 static int failures = 0;
 
@@ -29,6 +31,13 @@ int main(void) {
 
         MascotPair apart = {20, 30, 100, -30};
         Check(!ResolveMascotCollision(&apart, 30), @"leaves separated mascots alone");
+
+        Check(MascotTargetAtPoint(45, 40, 150, 24) == MascotTargetClaude,
+              @"selects Claude inside its touch target");
+        Check(MascotTargetAtPoint(145, 40, 150, 24) == MascotTargetGPT,
+              @"selects GPT inside its touch target");
+        Check(MascotTargetAtPoint(95, 40, 150, 20) == MascotTargetNone,
+              @"ignores touches between mascots");
     }
     printf("mascot physics: %s\n", failures ? "failed" : "ok");
     return failures ? 1 : 0;
