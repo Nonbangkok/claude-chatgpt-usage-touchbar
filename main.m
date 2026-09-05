@@ -610,16 +610,21 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     UsageProvider *codex = [UsageProvider new]; codex.state = self.codexState;
     NSArray<NSString *> *visible = VisibleUsageProviderNames(claude, codex);
     NSMutableArray<NSArray *> *cells = [NSMutableArray arrayWithCapacity:4];
-    if ([visible containsObject:@"claude"]) {
-        [cells addObject:@[self.demoMode ? @"C Pro" : sessionLabel(@"C5", self.state, self.resetMin, self.ageSec),
+    if (self.demoMode) {
+        // Demo intentionally never consults account state. Wide labelled cells
+        // make the illustrative status unmistakable in a screenshot.
+        [cells addObject:@[@"Claude Pro • DEMO", @(self.p5), self.state]];
+        [cells addObject:@[@"ChatGPT Pro • DEMO", @(self.codexP5), self.codexState]];
+    } else if ([visible containsObject:@"claude"]) {
+        [cells addObject:@[sessionLabel(@"C5", self.state, self.resetMin, self.ageSec),
                           @(claudeReady ? self.p5 : -1), self.state]];
-        [cells addObject:@[self.demoMode ? @"C 7d" : ([self.state isEqualToString:@"expired"] ? @"C —" : @"C7"),
+        [cells addObject:@[[self.state isEqualToString:@"expired"] ? @"C —" : @"C7",
                           @(claudeReady ? self.p7 : -1), self.state]];
     }
-    if ([visible containsObject:@"codex"]) {
-        [cells addObject:@[self.demoMode ? @"G Pro" : sessionLabel(@"G5", self.codexState, self.codexResetMin, self.codexAgeSec),
+    if (!self.demoMode && [visible containsObject:@"codex"]) {
+        [cells addObject:@[sessionLabel(@"G5", self.codexState, self.codexResetMin, self.codexAgeSec),
                           @(codexReady ? self.codexP5 : -1), self.codexState]];
-        [cells addObject:@[self.demoMode ? @"G 7d" : ([self.codexState isEqualToString:@"expired"] ? @"G —" : @"G7"),
+        [cells addObject:@[[self.codexState isEqualToString:@"expired"] ? @"G —" : @"G7",
                           @(codexReady ? self.codexP7 : -1), self.codexState]];
     }
 
