@@ -27,7 +27,11 @@ int main(void) {
         Check(inks, @"every cell uses a palette index");
         Check(rows, @"nothing is drawn outside the declared row window");
         Check(Count(stand, GPT_TOP, GPT_BOT, 0, GPT_N - 1, GPTInkBody) > 60, @"a solid body");
-        Check(Count(stand, 6, 9, 6, 12, GPTInkGlow) == 8, @"the resting face is two 2x2 glowing eyes");
+        Check(Count(stand, 6, 9, 6, 12, GPTInkGlow) == 6 && Count(stand, 6, 9, 6, 12, GPTInkHighlight) == 2,
+              @"the resting face is two 2x2 eyes, each with a catchlight");
+        Check(Count(stand, 12, 14, 6, 12, GPTInkGlow) == 5, @"the chest wears the >_ glyph");
+        Check(Count(stand, 12, 14, 5, 5, GPTInkShade) == 3 && Count(stand, 12, 14, 13, 13, GPTInkShade) == 3,
+              @"two three-row arms in the shade colour hug the body");
         Check(Count(stand, 16, 17, 6, 7, GPTInkBody) == 4 && Count(stand, 16, 17, 11, 12, GPTInkBody) == 4,
               @"standing: two full legs");
         // Symmetry of the body outside the face keeps the mirror flip honest.
@@ -36,6 +40,7 @@ int main(void) {
             for (int c = 0; c < GPT_N; c++) {
                 if (r >= 6 && r <= 9 && c >= 6 && c <= 12) continue;   // face region
                 unsigned char a = stand[r * GPT_N + c], b = stand[r * GPT_N + (18 - c)];
+                if (a == GPTInkGlow || b == GPTInkGlow) continue;       // the chest glyph
                 if (c <= 18 && a != b) symmetric = NO;
             }
         Check(symmetric, @"the body is left-right symmetric about column 9");
@@ -48,7 +53,7 @@ int main(void) {
                     if (other[r * GPT_N + c] != stand[r * GPT_N + c] && !(r >= 6 && r <= 9 && c >= 6 && c <= 12))
                         onlyFace = NO;
             Check(onlyFace, [NSString stringWithFormat:@"face %ld changes only the visor", (long)f]);
-            Check(Count(other, 6, 9, 6, 12, GPTInkGlow) + Count(other, 6, 9, 6, 12, GPTInkShade) >= 4,
+            Check(Count(other, 6, 9, 6, 12, GPTInkGlow) + Count(other, 6, 9, 6, 12, GPTInkShade) + Count(other, 6, 9, 6, 12, GPTInkHighlight) >= 4,
                   [NSString stringWithFormat:@"face %ld is visible", (long)f]);
         }
         GPTSpriteFrame(GPTFaceSleepy, -1, other);
