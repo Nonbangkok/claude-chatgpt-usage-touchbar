@@ -768,12 +768,12 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
             BOOL has7 = !ready || p7 >= 0;
             if (has5)
                 [cells addObject:@[usageLabel(name, @"5h", providerState),
-                                   @(ready ? p5 : -1), providerState, @(reset5), provider]];
+                                   @(ready ? p5 : -1), providerState, @(reset5), provider, @NO]];
             if (has7)
                 [cells addObject:@[usageLabel(name, UsagePeriodLabel(longDays), providerState),
-                                   @(ready ? p7 : -1), providerState, @(reset7), provider]];
+                                   @(ready ? p7 : -1), providerState, @(reset7), provider, @YES]];
             if (!has5 && !has7)   // live but reporting nothing: one honest placeholder
-                [cells addObject:@[[name stringByAppendingString:@" —"], @-1, providerState, @-1, provider]];
+                [cells addObject:@[[name stringByAppendingString:@" —"], @-1, providerState, @-1, provider, @NO]];
         };
     if ([visible containsObject:@"claude"])
         addProvider(claudeName, @"claude", claudeReady, self.state,
@@ -800,6 +800,7 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
         BOOL selected = self.usageTapT > 0 && self.activeUsageCell == i;
         NSString *label = selected ? UsageResetDisplay([cells[i][3] intValue]) : cells[i][0];
         [self drawCell:cells[i][0] pct:[cells[i][1] intValue] provider:cells[i][4]
+                longWindow:[cells[i][5] boolValue]
                      x:READ_X + i * (cellW + CELL_GAP) width:cellW dim:dim
                   effect:(selected ? self.usageTapT / 2.5 : 0) resetLabel:label];
         int reset = [cells[i][3] intValue];
@@ -829,9 +830,10 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     if (a < 0.003) return;
     int pct = [self.lensCell[1] intValue];
     int remaining = UsageRemainingPercent(pct);
+    BOOL longWindow = [self.lensCell[5] boolValue];
     NSColor *tint = remaining <= 10
         ? [NSColor colorWithSRGBRed:1 green:0.32 blue:0.34 alpha:1]
-        : remaining <= 50 ? [NSColor colorWithSRGBRed:1 green:0.76 blue:0.34 alpha:1]
+        : (remaining <= 50 && !longWindow) ? [NSColor colorWithSRGBRed:1 green:0.76 blue:0.34 alpha:1]
         : ProviderAccent(self.lensCell[4], YES);
     CGFloat cx = MAX(READ_X + 17, MIN(l.x, READ_X + READ_W - 17));
     CGFloat cy = 15;
@@ -958,11 +960,16 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
 // readout deliberately inverts it so the bar and the number answer "how much
 // can I still use?" without mental subtraction.
 - (void)drawCell:(NSString *)label pct:(int)pct provider:(NSString *)provider
+        longWindow:(BOOL)longWindow
                x:(CGFloat)x width:(CGFloat)w dim:(CGFloat)dim
           effect:(CGFloat)effect resetLabel:(NSString *)resetLabel {
     BOOL unavailable = pct < 0;
     int remaining = UsageRemainingPercent(pct);
     UsageRemainingLevel level = UsageRemainingLevelForUsedPercent(pct);
+    // The long window keeps its provider colour while merely "getting lower";
+    // only the alarm level (<=10% left) overrides it. The short window is the
+    // one that burns fast, so it still turns amber early.
+    if (longWindow && level == UsageRemainingLevelWarning) level = UsageRemainingLevelNormal;
     NSColor *ink;
     if (level == UsageRemainingLevelCritical)
         ink = [NSColor colorWithSRGBRed:0.902 green:0.208 blue:0.180 alpha:1.0];  // ≤10% left
@@ -1491,6 +1498,8 @@ static int RenderStates(NSString *dir) {
         @"11-codex-expired": @[@26, @91, @125, @"ok", @0, @"", @0, @0, @-1, @"expired"],
         @"13-no-5h-either": @[@-1, @41, @-1, @"ok", @0, @"", @-1, @0, @-1, @"ok"],
         @"15-free-chatgpt-30d": @[@-1, @41, @-1, @"ok", @0, @"", @-1, @12, @-1, @"ok", @30],
+        @"16-long-windows-low": @[@70, @60, @90, @"ok", @0, @"", @40, @70, @44, @"ok", @30],
+        @"17-long-windows-critical": @[@70, @94, @90, @"ok", @0, @"", @40, @96, @44, @"ok", @30],
         @"14-claude-no-5h": @[@-1, @41, @-1, @"ok", @0, @"", @18, @42, @44, @"ok"],
         @"12-claude-none": @[@0, @0, @-1, @"none", @0, @"", @18, @42, @44, @"ok"],
     };
