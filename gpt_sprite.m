@@ -12,12 +12,14 @@ const unsigned char kGPTPalette[GPTInkCount][3] = {
 // '.' empty  '1' body  '2' visor  '3' glow  '4' shade.
 // Chibi proportions: a small round cloud of a head on a chubby body with
 // stubby legs. The visor (rows 6-9, cols 6-12) is blank here; faces paint
-// the original's >_ terminal prompt into it. The chest wears it too.
+// the original's >_ terminal prompt into it. The chest wears it too. A short
+// antenna rises from the back of the head with a glowing ball on top; the
+// walking mirror keeps it at the back whichever way it faces.
 static const char *kBase[GPT_N] = {
     "....................",
     "....................",
-    "....................",
-    ".......11111........",   // 3  crown
+    ".....3..............",   // 2  antenna ball, glowing
+    ".....4.11111........",   // 3  antenna stem at the back of the head; crown
     ".....111111111......",   // 4
     "....11111111111.....",   // 5
     "....11222222211.....",   // 6  visor

@@ -6,7 +6,7 @@
 #import <Foundation/Foundation.h>
 
 #define GPT_N   20
-#define GPT_TOP 3          // first occupied row (cloud top)
+#define GPT_TOP 2          // first occupied row (the antenna ball)
 #define GPT_BOT 17         // last occupied row (feet)
 
 // Palette indices used in the grid. 0 is transparent.
