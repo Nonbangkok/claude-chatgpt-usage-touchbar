@@ -977,7 +977,8 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     // should read as "nothing to report here", not as a loading bar that broke.
     CGFloat quiet = unavailable ? 0.55 : 1.0;
     NSDictionary *lb = @{ NSFontAttributeName: [NSFont systemFontOfSize:labelSize weight:NSFontWeightSemibold],
-                          NSForegroundColorAttributeName: [NSColor colorWithWhite:1.0 alpha:(0.70 + effect * 0.30) * dim * quiet] };
+                          NSForegroundColorAttributeName: [ProviderAccent(provider, NO)
+                              colorWithAlphaComponent:(0.85 + effect * 0.15) * dim * quiet] };
     [resetLabel drawAtPoint:NSMakePoint(x, TEXT_Y) withAttributes:lb];
 
     NSString *num = unavailable ? @"—" : UsageRemainingDisplay(pct);
