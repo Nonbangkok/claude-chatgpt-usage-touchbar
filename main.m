@@ -744,18 +744,31 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     NSString *claudeName = @"Claude";
     NSString *codexName = oneProvider ? @"ChatGPT" : @"GPT";
     NSMutableArray<NSArray *> *cells = [NSMutableArray arrayWithCapacity:4];
-    if ([visible containsObject:@"claude"]) {
-        [cells addObject:@[usageLabel(claudeName, @"5h", self.state),
-                          @(claudeReady ? self.p5 : -1), self.state, @(self.resetMin)]];
-        [cells addObject:@[usageLabel(claudeName, @"7d", self.state),
-                          @(claudeReady ? self.p7 : -1), self.state, @(self.reset7dMin)]];
-    }
-    if ([visible containsObject:@"codex"]) {
-        [cells addObject:@[usageLabel(codexName, @"5h", self.codexState),
-                          @(codexReady ? self.codexP5 : -1), self.codexState, @(self.codexResetMin)]];
-        [cells addObject:@[usageLabel(codexName, @"7d", self.codexState),
-                          @(codexReady ? self.codexP7 : -1), self.codexState, @(self.codexReset7dMin)]];
-    }
+
+    // Show a window only if the account actually has one. A reading of -1 on a
+    // live provider means "no such window" — Claude Max 20x has no 5h limit and
+    // a free ChatGPT plan has neither a 5h nor a weekly one — so an empty gauge
+    // there is noise. A provider that is expired or has no data keeps both
+    // placeholder cells, because then we simply do not know what it has.
+    void (^addProvider)(NSString *, BOOL, NSString *, int, int, int, int) =
+        ^(NSString *name, BOOL ready, NSString *providerState, int p5, int p7, int reset5, int reset7) {
+            BOOL has5 = !ready || p5 >= 0;
+            BOOL has7 = !ready || p7 >= 0;
+            if (has5)
+                [cells addObject:@[usageLabel(name, @"5h", providerState),
+                                   @(ready ? p5 : -1), providerState, @(reset5)]];
+            if (has7)
+                [cells addObject:@[usageLabel(name, @"7d", providerState),
+                                   @(ready ? p7 : -1), providerState, @(reset7)]];
+            if (!has5 && !has7)   // live but reporting nothing: one honest placeholder
+                [cells addObject:@[[name stringByAppendingString:@" —"], @-1, providerState, @-1]];
+        };
+    if ([visible containsObject:@"claude"])
+        addProvider(claudeName, claudeReady, self.state,
+                    self.p5, self.p7, self.resetMin, self.reset7dMin);
+    if ([visible containsObject:@"codex"])
+        addProvider(codexName, codexReady, self.codexState,
+                    self.codexP5, self.codexP7, self.codexResetMin, self.codexReset7dMin);
 
     return cells;
 }
@@ -1460,7 +1473,8 @@ static int RenderStates(NSString *dir) {
         @"09-claude-codex": @[@26, @91, @125, @"ok", @0, @"", @18, @42, @44, @"ok"],
         @"10-codex-stale": @[@26, @91, @125, @"ok", @0, @"", @18, @42, @44, @"stale"],
         @"11-codex-expired": @[@26, @91, @125, @"ok", @0, @"", @0, @0, @-1, @"expired"],
-        @"13-null-5h": @[@-1, @41, @-1, @"ok", @0, @"", @-1, @0, @-1, @"ok"],
+        @"13-no-5h-either": @[@-1, @41, @-1, @"ok", @0, @"", @-1, @0, @-1, @"ok"],
+        @"14-claude-no-5h": @[@-1, @41, @-1, @"ok", @0, @"", @18, @42, @44, @"ok"],
         @"12-claude-none": @[@0, @0, @-1, @"none", @0, @"", @18, @42, @44, @"ok"],
     };
     [NSFileManager.defaultManager createDirectoryAtPath:dir
