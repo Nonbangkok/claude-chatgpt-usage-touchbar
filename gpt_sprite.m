@@ -10,23 +10,25 @@ const unsigned char kGPTPalette[GPTInkCount][3] = {
 };
 
 // '.' empty  '1' body  '2' visor  '3' glow  '4' shade.
-// The visor (rows 8-10, cols 5-13) is drawn blank here; faces paint into it.
+// Chibi proportions: a small round cloud of a head on a chubby body with
+// stubby legs. The visor (rows 6-9, cols 6-12) is blank here; faces paint
+// big square eyes into it.
 static const char *kBase[GPT_N] = {
     "....................",
     "....................",
     "....................",
-    ".....1111.1111......",   // 3  cloud top, two bumps
-    "....11111111111.....",   // 4
-    "...1111111111111....",   // 5
-    "..111111111111111...",   // 6
-    "..111222222222111...",   // 7  visor rim
-    ".11112222222221111..",   // 8
-    ".11112222222221111..",   // 9
-    ".11112222222221111..",   // 10
-    "..111222222222111...",   // 11
-    "..144444444444441...",   // 12 shade under the head
-    "....4.1111111.4.....",   // 13 arms + body
-    "....4.1113111.4.....",   // 14 chest light
+    ".......11111........",   // 3  crown
+    ".....111111111......",   // 4
+    "....11111111111.....",   // 5
+    "....11222222211.....",   // 6  visor
+    "...1112222222111....",   // 7  side bumps
+    "...1112222222111....",   // 8
+    "....11222222211.....",   // 9
+    ".....111111111......",   // 10 chin
+    "......4444444.......",   // 11 shade under the head
+    "....4.1111111.4.....",   // 12 arms + body
+    "....4.1113111.4.....",   // 13 chest light
+    "......1111111.......",   // 14
     "......1111111.......",   // 15
     "......11...11.......",   // 16 legs
     "......11...11.......",   // 17
@@ -40,27 +42,29 @@ static void Put(unsigned char *g, int r, int c, unsigned char v) {
 
 static void PaintFace(unsigned char *g, GPTFace face) {
     switch (face) {
-        case GPTFaceNormal:                      // >  _
-            Put(g, 8, 6, 3); Put(g, 9, 7, 3); Put(g, 10, 6, 3);
-            Put(g, 10, 10, 3); Put(g, 10, 11, 3);
+        case GPTFaceNormal:                      // two big square eyes
+            Put(g, 7, 7, 3); Put(g, 7, 8, 3); Put(g, 8, 7, 3); Put(g, 8, 8, 3);
+            Put(g, 7, 10, 3); Put(g, 7, 11, 3); Put(g, 8, 10, 3); Put(g, 8, 11, 3);
             break;
         case GPTFaceLook:                        // the same, one cell toward the right
-            Put(g, 8, 7, 3); Put(g, 9, 8, 3); Put(g, 10, 7, 3);
-            Put(g, 10, 11, 3); Put(g, 10, 12, 3);
+            Put(g, 7, 8, 3); Put(g, 7, 9, 3); Put(g, 8, 8, 3); Put(g, 8, 9, 3);
+            Put(g, 7, 11, 3); Put(g, 7, 12, 3); Put(g, 8, 11, 3); Put(g, 8, 12, 3);
             break;
-        case GPTFaceBlink:                       // -  -
-            Put(g, 9, 6, 3); Put(g, 9, 7, 3); Put(g, 9, 10, 3); Put(g, 9, 11, 3);
+        case GPTFaceBlink:                       // - -
+            Put(g, 8, 7, 3); Put(g, 8, 8, 3); Put(g, 8, 10, 3); Put(g, 8, 11, 3);
             break;
-        case GPTFaceHappy:                       // ^  ^
-            Put(g, 8, 6, 3); Put(g, 9, 5, 3); Put(g, 9, 7, 3);
-            Put(g, 8, 11, 3); Put(g, 9, 10, 3); Put(g, 9, 12, 3);
+        case GPTFaceHappy:                       // ^ ^ and a smile
+            Put(g, 7, 7, 3); Put(g, 8, 6, 3); Put(g, 8, 8, 3);
+            Put(g, 7, 11, 3); Put(g, 8, 10, 3); Put(g, 8, 12, 3);
+            Put(g, 9, 8, 3); Put(g, 9, 9, 3); Put(g, 9, 10, 3);
             break;
-        case GPTFaceSurprised:                   // o  o  (wide)
-            Put(g, 8, 6, 3); Put(g, 8, 7, 3); Put(g, 9, 6, 3); Put(g, 9, 7, 3);
-            Put(g, 8, 10, 3); Put(g, 8, 11, 3); Put(g, 9, 10, 3); Put(g, 9, 11, 3);
+        case GPTFaceSurprised:                   // eyes plus a little o mouth
+            Put(g, 7, 7, 3); Put(g, 7, 8, 3); Put(g, 8, 7, 3); Put(g, 8, 8, 3);
+            Put(g, 7, 10, 3); Put(g, 7, 11, 3); Put(g, 8, 10, 3); Put(g, 8, 11, 3);
+            Put(g, 9, 9, 3);
             break;
         case GPTFaceSleepy:                      // half-closed, dimmer
-            Put(g, 9, 6, 4); Put(g, 9, 7, 4); Put(g, 9, 10, 4); Put(g, 9, 11, 4);
+            Put(g, 8, 7, 4); Put(g, 8, 8, 4); Put(g, 8, 10, 4); Put(g, 8, 11, 4);
             break;
     }
 }

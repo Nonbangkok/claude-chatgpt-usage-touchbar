@@ -26,15 +26,15 @@ int main(void) {
                 if (stand[r * GPT_N + c] && (r < GPT_TOP || r > GPT_BOT)) rows = NO;
         Check(inks, @"every cell uses a palette index");
         Check(rows, @"nothing is drawn outside the declared row window");
-        Check(Count(stand, GPT_TOP, GPT_BOT, 0, GPT_N - 1, GPTInkBody) > 80, @"a solid body");
-        Check(Count(stand, 8, 10, 5, 13, GPTInkGlow) == 5, @"the >_ face is five glowing cells");
+        Check(Count(stand, GPT_TOP, GPT_BOT, 0, GPT_N - 1, GPTInkBody) > 60, @"a solid body");
+        Check(Count(stand, 6, 9, 6, 12, GPTInkGlow) == 8, @"the resting face is two 2x2 glowing eyes");
         Check(Count(stand, 16, 17, 6, 7, GPTInkBody) == 4 && Count(stand, 16, 17, 11, 12, GPTInkBody) == 4,
               @"standing: two full legs");
         // Symmetry of the body outside the face keeps the mirror flip honest.
         BOOL symmetric = YES;
         for (int r = GPT_TOP; r <= GPT_BOT; r++)
             for (int c = 0; c < GPT_N; c++) {
-                if (r >= 8 && r <= 10 && c >= 5 && c <= 13) continue;   // face region
+                if (r >= 6 && r <= 9 && c >= 6 && c <= 12) continue;   // face region
                 unsigned char a = stand[r * GPT_N + c], b = stand[r * GPT_N + (18 - c)];
                 if (c <= 18 && a != b) symmetric = NO;
             }
@@ -45,14 +45,14 @@ int main(void) {
             BOOL onlyFace = YES;
             for (int r = 0; r < GPT_N; r++)
                 for (int c = 0; c < GPT_N; c++)
-                    if (other[r * GPT_N + c] != stand[r * GPT_N + c] && !(r >= 8 && r <= 10 && c >= 5 && c <= 13))
+                    if (other[r * GPT_N + c] != stand[r * GPT_N + c] && !(r >= 6 && r <= 9 && c >= 6 && c <= 12))
                         onlyFace = NO;
             Check(onlyFace, [NSString stringWithFormat:@"face %ld changes only the visor", (long)f]);
-            Check(Count(other, 8, 10, 5, 13, GPTInkGlow) + Count(other, 8, 10, 5, 13, GPTInkShade) >= 4,
+            Check(Count(other, 6, 9, 6, 12, GPTInkGlow) + Count(other, 6, 9, 6, 12, GPTInkShade) >= 4,
                   [NSString stringWithFormat:@"face %ld is visible", (long)f]);
         }
         GPTSpriteFrame(GPTFaceSleepy, -1, other);
-        Check(Count(other, 8, 10, 5, 13, GPTInkGlow) == 0, @"sleepy eyes are dim, not glowing");
+        Check(Count(other, 6, 9, 6, 12, GPTInkGlow) == 0, @"sleepy eyes are dim, not glowing");
 
         unsigned char steps[4][GPT_N * GPT_N];
         for (int s = 0; s < 4; s++) GPTSpriteFrame(GPTFaceNormal, s, steps[s]);

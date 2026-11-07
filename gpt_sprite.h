@@ -14,7 +14,7 @@ enum { GPTInkNone = 0, GPTInkBody = 1, GPTInkVisor = 2, GPTInkGlow = 3, GPTInkSh
 extern const unsigned char kGPTPalette[GPTInkCount][3];
 
 typedef NS_ENUM(NSInteger, GPTFace) {
-    GPTFaceNormal,      // >_
+    GPTFaceNormal,      // two big eyes
     GPTFaceBlink,       // - -
     GPTFaceHappy,       // ^ ^  (tapped, cheered)
     GPTFaceSurprised,   // o o  (grabbed)
