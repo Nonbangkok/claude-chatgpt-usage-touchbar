@@ -40,13 +40,10 @@ or drag and release it to toss it along the runway.
 
 Touch a usage bar and the readout becomes a detail panel for that window: a
 ring gauge of what is left, when it resets as both a countdown and a clock, and
-a timeline of the whole window with a marker at *now*. From how much has been
-used so far, the panel works out the pace and says plainly whether the
-allowance lasts — `on pace · ~12% to spare at reset` — or not — `at this pace:
-runs out in 28m`, with the dead zone hatched red on the timeline. Drag along
-the timeline to read the forecast at any moment: `in 2h 03m · 15:38 → ~18%
-left`. A tap keeps the panel up for three seconds; a drag lingers on its last
-forecast, then springs away. Preview the gestures with
+a timeline of the whole window showing how much of it has passed, with a
+marker at *now*. Drag along the timeline to read the clock at any point of
+the window (`in 2h 03m · 15:38`). A tap keeps the panel up for three seconds;
+a drag lingers where you left it, then springs away. Preview the gestures with
 `./ClaudeTouchBar.app/Contents/MacOS/ClaudeTouchBar --film-lens /tmp/lens-frames 10.5`
 (60 fps PNG sequence).
 

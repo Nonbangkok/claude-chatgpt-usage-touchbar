@@ -91,6 +91,11 @@ int main(void) {
                 demoCodex.p7 >= 28 && demoCodex.p7 <= 75,
                 @"ChatGPT demo has a randomized live-looking allowance");
 
+        require([UsageDurationDisplay(45) isEqualToString:@"45m"] &&
+                [UsageDurationDisplay(80) isEqualToString:@"1h 20m"] &&
+                [UsageDurationDisplay(3000) isEqualToString:@"2d 2h"] &&
+                [UsageDurationDisplay(-1) isEqualToString:@"—"],
+                @"durations read as m, h m, d h");
         require([UsageResetDisplay(92) isEqualToString:@"↻ 1h 32m"],
                 @"formats a session reset with hours and minutes");
         require([UsageResetDisplay(6150) isEqualToString:@"↻ 4d 6h"],

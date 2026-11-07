@@ -22,6 +22,8 @@ FOUNDATION_EXPORT NSArray<NSString *> *VisibleUsageProviderNames(UsageProvider *
                                                                   UsageProvider *codex);
 FOUNDATION_EXPORT UsageProvider *DemoUsageProvider(NSString *name);
 FOUNDATION_EXPORT NSString *UsageResetDisplay(int resetMin);
+// "45m", "1h 20m", "2d 3h"; "—" for a negative value.
+FOUNDATION_EXPORT NSString *UsageDurationDisplay(int minutes);
 FOUNDATION_EXPORT NSString *UsagePeriodLabel(int days);
 FOUNDATION_EXPORT NSString * _Nullable UsagePlanDisplay(NSString * _Nullable plan);
 

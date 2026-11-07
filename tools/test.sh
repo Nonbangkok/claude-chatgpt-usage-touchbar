@@ -174,11 +174,6 @@ if clang -fobjc-arc -framework Foundation -o /tmp/claude-touchbar-effects-test \
   pass=$((pass+1)); echo "  ok    effects: particles, hops and tweens"
 else fail=$((fail+1)); echo "  FAIL  effects: particles, hops and tweens"; fi
 
-if clang -fobjc-arc -framework Foundation -o /tmp/claude-touchbar-pace-test \
-    tools/usage-pace-test.m usage_pace.m 2>/dev/null && /tmp/claude-touchbar-pace-test; then
-  pass=$((pass+1)); echo "  ok    usage pace and forecast"
-else fail=$((fail+1)); echo "  FAIL  usage pace and forecast"; fi
-
 if ! rg -q 'escapeKeyReplacementItemIdentifier|sendEscape:|local\\.claude-touchbar\\.esc' main.m; then
   pass=$((pass+1)); echo "  ok    no replacement Escape key"
 else fail=$((fail+1)); echo "  FAIL  replacement Escape key is still present"; fi

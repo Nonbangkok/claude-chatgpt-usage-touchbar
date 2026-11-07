@@ -62,12 +62,16 @@ UsageProvider *DemoUsageProvider(NSString *name) {
     return usage;
 }
 
+NSString *UsageDurationDisplay(int minutes) {
+    if (minutes < 0) return @"—";
+    if (minutes < 60) return [NSString stringWithFormat:@"%dm", minutes];
+    if (minutes < 24 * 60)
+        return [NSString stringWithFormat:@"%dh %dm", minutes / 60, minutes % 60];
+    return [NSString stringWithFormat:@"%dd %dh", minutes / (24 * 60), (minutes / 60) % 24];
+}
+
 NSString *UsageResetDisplay(int resetMin) {
-    if (resetMin < 0) return @"↻ —";
-    if (resetMin < 60) return [NSString stringWithFormat:@"↻ %dm", resetMin];
-    if (resetMin < 24 * 60)
-        return [NSString stringWithFormat:@"↻ %dh %dm", resetMin / 60, resetMin % 60];
-    return [NSString stringWithFormat:@"↻ %dd %dh", resetMin / (24 * 60), (resetMin / 60) % 24];
+    return [@"↻ " stringByAppendingString:UsageDurationDisplay(resetMin)];
 }
 
 int UsageRemainingPercent(int usedPercent) {

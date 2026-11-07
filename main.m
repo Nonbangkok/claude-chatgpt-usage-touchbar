@@ -20,7 +20,6 @@
 #import "usage_model.h"
 #import "lens_motion.h"
 #import "effects.h"
-#import "usage_pace.h"
 #import <string.h>
 #import "usage_parser.h"
 
@@ -53,7 +52,7 @@ static double  const kFPS    = 15.0;    // both reference pet apps land at 14-18
 // out side by side so they can be compared at a glance. Earlier versions gave
 // 5h and 7d a row each and demoted the per-model cap to a bare number with no
 // bar, which made the one number you could not compare the odd one out.
-#define READ_W    414.0
+#define READ_W    380.0
 #define READ_X    (kSceneW - READ_W - 8)   // right-aligned: usage is the thing
                                            // you look for, so it sits where the
                                            // eye lands last and stays put
@@ -65,7 +64,7 @@ static double  const kFPS    = 15.0;    // both reference pet apps land at 14-18
 #define PANEL_RING_X   (READ_X + 15.0)
 #define PANEL_TEXT_X   (READ_X + 34.0)
 #define PANEL_TRACK_X0 (READ_X + 34.0)
-#define PANEL_TRACK_X1 (READ_X + 262.0)
+#define PANEL_TRACK_X1 (READ_X + 236.0)
 #define PANEL_RIGHT    (READ_X + READ_W - 6.0)
 #define BAR_Y       3.0
 #define BAR_H       8.0
@@ -1106,20 +1105,12 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     if (self.lens.visible && self.lensCell) [self drawUsageLens];
 }
 
-// The detail panel. Touching a bar replaces the readout with the one thing
-// the bar cannot say: not just how much is left, but whether it will last.
+// The detail panel. Touching a bar replaces the readout with the facts about
+// that one window, laid out to be read in a glance:
 //   ring   — remaining %, sweeping in as the panel opens
 //   title  — "Claude Ultra · 7d  52% left"      right: "resets in 2d 3h · Sun 12:00"
-//   track  — the whole window as a timeline: elapsed, now, and at the observed
-//            pace either the reset (with how much to spare) or the point where
-//            the allowance runs out
-//   scrub  — drag along the track to read the forecast at any moment
-static NSColor *PaceColor(UsagePaceVerdict verdict, NSColor *tint) {
-    if (verdict == UsagePaceVerdictExhausts) return [NSColor colorWithSRGBRed:1 green:0.40 blue:0.38 alpha:1];
-    if (verdict == UsagePaceVerdictLasts)    return [NSColor colorWithSRGBRed:0.45 green:0.86 blue:0.58 alpha:1];
-    return [tint colorWithAlphaComponent:0.7];
-}
-
+//   track  — the whole window as a timeline: how much has passed, and "now"
+//   scrub  — drag along the track to read the clock at any point of the window
 static NSString *ClockLabel(NSDate *date, BOOL withDay) {
     static NSDateFormatter *time, *dayTime;
     static dispatch_once_t once;
@@ -1141,13 +1132,15 @@ static NSString *ClockLabel(NSDate *date, BOOL withDay) {
     int remaining = UsageRemainingPercent(pct);
     int windowMin = [self.lensCell[6] intValue];
     int resetMin = self.lensResetDate ? MAX(0, (int)ceil([self.lensResetDate timeIntervalSinceNow] / 60)) : -1;
-    UsagePace pace = UsagePaceCompute(pct, resetMin, windowMin);
-    UsagePaceVerdict verdict = UsagePaceVerdictFor(pace);
+    // Where we are in the window. The API gives minutes to the reset; the
+    // window length is fixed, so the elapsed part follows.
+    BOOL timed = resetMin >= 0 && windowMin > 0;
+    double remainingMin = timed ? MIN(resetMin, windowMin) : 0;
+    double elapsedMin = timed ? windowMin - remainingMin : 0;
     NSColor *tint = remaining <= 10
         ? [NSColor colorWithSRGBRed:1 green:0.32 blue:0.34 alpha:1]
         : remaining <= 50 ? [NSColor colorWithSRGBRed:1 green:0.76 blue:0.34 alpha:1]
         : ProviderAccent(self.lensCell[4], YES);
-    NSColor *paceInk = PaceColor(verdict, tint);
 
     [NSGraphicsContext saveGraphicsState];
     NSRectClip(NSMakeRect(READ_X - 2, 0, READ_W + 4, kSceneH));
@@ -1226,33 +1219,16 @@ static NSString *ClockLabel(NSDate *date, BOOL withDay) {
     CGFloat tx0 = PANEL_TRACK_X0, tx1 = PANEL_TRACK_X1, tw0 = tx1 - tx0, ty = 4.0, th = 5.0;
     NSBezierPath *track = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(tx0, ty, tw0, th) xRadius:2.5 yRadius:2.5];
     [[NSColor colorWithWhite:1 alpha:a * 0.10] set]; [track fill];
-    CGFloat nowX = tx0, exhaustX = -1;
-    if (pace.valid) {
-        nowX = tx0 + tw0 * (pace.elapsedMin / pace.windowMin) * ease;
+    CGFloat nowX = tx0;
+    if (timed) {
+        nowX = tx0 + tw0 * (elapsedMin / windowMin) * ease;
         [NSGraphicsContext saveGraphicsState];
         [track addClip];
-        // What has already passed.
-        [[NSColor colorWithWhite:1 alpha:a * 0.22] set];
+        [[NSColor colorWithWhite:1 alpha:a * 0.22] set];                 // passed
         NSRectFill(NSMakeRect(tx0, ty, nowX - tx0, th));
-        // What is still to come, coloured by the verdict.
-        if (verdict == UsagePaceVerdictExhausts) {
-            exhaustX = nowX + tw0 * (pace.exhaustInMin / pace.windowMin);
-            [[paceInk colorWithAlphaComponent:a * 0.55] set];
-            NSRectFill(NSMakeRect(nowX, ty, exhaustX - nowX, th));
-            // The dead zone: nothing left between running out and the reset.
-            [[paceInk colorWithAlphaComponent:a * 0.14] set];
-            NSRectFill(NSMakeRect(exhaustX, ty, tx1 - exhaustX, th));
-            NSBezierPath *hatch = [NSBezierPath bezierPath];
-            hatch.lineWidth = 0.7;
-            for (CGFloat hx = exhaustX; hx < tx1 + th; hx += 3.5) {
-                [hatch moveToPoint:NSMakePoint(hx, ty)]; [hatch lineToPoint:NSMakePoint(hx - th, ty + th)];
-            }
-            [[paceInk colorWithAlphaComponent:a * 0.35] set]; [hatch stroke];
-        } else {
-            NSGradient *future = [[NSGradient alloc] initWithStartingColor:[paceInk colorWithAlphaComponent:a * 0.55]
-                                                              endingColor:[paceInk colorWithAlphaComponent:a * 0.18]];
-            [future drawInRect:NSMakeRect(nowX, ty, tx1 - nowX, th) angle:0];
-        }
+        NSGradient *future = [[NSGradient alloc] initWithStartingColor:[tint colorWithAlphaComponent:a * 0.50]
+                                                          endingColor:[tint colorWithAlphaComponent:a * 0.16]];
+        [future drawInRect:NSMakeRect(nowX, ty, tx1 - nowX, th) angle:0];  // still to come
         [NSGraphicsContext restoreGraphicsState];
         // Quarter ticks turn the track into a scale.
         [[NSColor colorWithWhite:1 alpha:a * 0.25] set];
@@ -1263,44 +1239,33 @@ static NSString *ClockLabel(NSDate *date, BOOL withDay) {
         NSRectFill(NSMakeRect(nowX - 2.5, ty - 1.5, 5, th + 3));
         [[NSColor colorWithWhite:1 alpha:a] set];
         NSRectFill(NSMakeRect(nowX - 0.8, ty - 1.5, 1.6, th + 3));
-        if (exhaustX >= 0) {                                   // where it runs out
-            [[paceInk colorWithAlphaComponent:a] set];
-            NSRectFill(NSMakeRect(exhaustX - 0.7, ty - 1.5, 1.4, th + 3));
-        }
     }
 
-    // --- pace copy (bottom right), and the forecast while scrubbing -------------
-    NSString *copy; NSColor *copyInk = paceInk;
-    BOOL scrub = l.scrubbing && pace.valid;
-    if (scrub) {
+    // --- bottom-right copy: where we are, or the clock under the finger --------
+    NSString *copy;
+    NSColor *copyInk = [NSColor colorWithWhite:1 alpha:0.75];
+    if (l.scrubbing && timed) {
         CGFloat fx = MAX(tx0, MIN(tx1, l.x));
-        double posMin = (fx - tx0) / tw0 * pace.windowMin;
-        double ahead = MAX(0, posMin - pace.elapsedMin);
-        double projected = UsagePaceProject(pace, ahead);
-        NSDate *at = [NSDate dateWithTimeIntervalSinceNow:ahead * 60];
-        if (ahead < 1)
-            copy = [NSString stringWithFormat:@"now · %d%% left", remaining];
-        else if (projected <= 0)
-            copy = [NSString stringWithFormat:@"in %@ · %@ → runs out", UsageDurationDisplay((int)ahead), ClockLabel(at, ahead >= 20 * 60)];
-        else
-            copy = [NSString stringWithFormat:@"in %@ · %@ → ~%d%% left", UsageDurationDisplay((int)ahead), ClockLabel(at, ahead >= 20 * 60), (int)lround(projected)];
-        copyInk = projected <= 0 ? PaceColor(UsagePaceVerdictExhausts, tint) : [NSColor colorWithWhite:1 alpha:0.9];
-        // Forecast cursor: a line through the track with a bead on top.
+        double delta = (fx - tx0) / tw0 * windowMin - elapsedMin;          // minutes from now
+        NSDate *at = [NSDate dateWithTimeIntervalSinceNow:delta * 60];
+        BOOL withDay = fabs(delta) >= 20 * 60;
+        if (delta >= 1)       copy = [NSString stringWithFormat:@"in %@ · %@", UsageDurationDisplay((int)delta), ClockLabel(at, withDay)];
+        else if (delta <= -1) copy = [NSString stringWithFormat:@"%@ ago · %@", UsageDurationDisplay((int)-delta), ClockLabel(at, withDay)];
+        else                  copy = [NSString stringWithFormat:@"now · %@", ClockLabel(at, NO)];
+        copyInk = NSColor.whiteColor;
+        // Cursor: a line through the track with a bead on top, and the span
+        // between it and now lit up.
+        [[tint colorWithAlphaComponent:a * 0.30] set];
+        NSRectFill(NSMakeRect(MIN(nowX, fx), ty, fabs(fx - nowX), th));
         [[NSColor colorWithWhite:1 alpha:a * 0.9] set];
         NSRectFill(NSMakeRect(fx - 0.5, 1.5, 1, th + 5));
         [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(fx - 1.8, ty + th + 1.2, 3.6, 3.6)] fill];
-        if (ahead >= 1) {
-            [[copyInk colorWithAlphaComponent:a * 0.25] set];
-            NSRectFill(NSMakeRect(MIN(nowX, fx), ty, fabs(fx - nowX), th));
-        }
-    } else if (verdict == UsagePaceVerdictExhausts) {
-        copy = [NSString stringWithFormat:@"at this pace: runs out in %@", UsageDurationDisplay((int)pace.exhaustInMin)];
-    } else if (verdict == UsagePaceVerdictLasts) {
-        copy = pace.ratePerMin > 0
-            ? [NSString stringWithFormat:@"on pace · ~%d%% to spare at reset", (int)lround(pace.spareAtResetPct)]
-            : @"untouched this window";
+    } else if (timed) {
+        NSString *span = windowMin % 1440 == 0 ? [NSString stringWithFormat:@"%dd", windowMin / 1440]
+                                              : [NSString stringWithFormat:@"%dh", windowMin / 60];
+        copy = [NSString stringWithFormat:@"%@ into the %@ window", UsageDurationDisplay((int)elapsedMin), span];
     } else {
-        copy = @"no reset time · pace unknown";
+        copy = @"reset time unavailable";
     }
     NSMutableDictionary *copyStyle = [@{ NSFontAttributeName: [NSFont systemFontOfSize:8.5 weight:NSFontWeightSemibold],
                                          NSForegroundColorAttributeName: [copyInk colorWithAlphaComponent:a] } mutableCopy];
