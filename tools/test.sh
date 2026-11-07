@@ -169,6 +169,11 @@ if clang -fobjc-arc -framework Foundation -o /tmp/claude-touchbar-mascot-physics
   pass=$((pass+1)); echo "  ok    mascot collision physics"
 else fail=$((fail+1)); echo "  FAIL  mascot collision physics"; fi
 
+if clang -fobjc-arc -framework Foundation -o /tmp/claude-touchbar-effects-test \
+    tools/effects-test.m effects.m 2>/dev/null && /tmp/claude-touchbar-effects-test; then
+  pass=$((pass+1)); echo "  ok    effects: particles, hops and tweens"
+else fail=$((fail+1)); echo "  FAIL  effects: particles, hops and tweens"; fi
+
 if ! rg -q 'escapeKeyReplacementItemIdentifier|sendEscape:|local\\.claude-touchbar\\.esc' main.m; then
   pass=$((pass+1)); echo "  ok    no replacement Escape key"
 else fail=$((fail+1)); echo "  FAIL  replacement Escape key is still present"; fi

@@ -29,11 +29,11 @@ assets:
 # A real bundle is required, not a bare binary: TouchBarServer keys Control Strip
 # items off the caller's bundle identity, and a bare binary reports (null) — the
 # item silently never appears.
-$(BIN): main.m lens_motion.m lens_motion.h mascot_physics.m mascot_physics.h usage_model.m usage_model.h usage_parser.h clawd_presets.h GPTMascot.png Info.plist
+$(BIN): main.m effects.m effects.h lens_motion.m lens_motion.h mascot_physics.m mascot_physics.h usage_model.m usage_model.h usage_parser.h clawd_presets.h GPTMascot.png Info.plist
 	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	cp Info.plist $(BUNDLE)/Contents/Info.plist
 	cp GPTMascot.png $(BUNDLE)/Contents/Resources/GPTMascot.png
-	clang $(FLAGS) -o $@ main.m lens_motion.m mascot_physics.m usage_model.m
+	clang $(FLAGS) -o $@ main.m effects.m lens_motion.m mascot_physics.m usage_model.m
 	@# File-provider workspaces can add FinderInfo during bundle creation; clear
 	@# it immediately before signing, in the same shell, so it cannot reappear.
 	@# File Provider may restore FinderInfo just after a new bundle is made.

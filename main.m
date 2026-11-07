@@ -19,6 +19,7 @@
 #import "mascot_physics.h"
 #import "usage_model.h"
 #import "lens_motion.h"
+#import "effects.h"
 #import <string.h>
 #import "usage_parser.h"
 
@@ -162,9 +163,26 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
 @property (nonatomic) CGFloat grabDX, grabStartX, dragVX, lastDragX, throwVX, wiggleT;
 @property (nonatomic) CGFloat nextActAt;
 @property (nonatomic) NSInteger lastClipIdx, clipLoops;
+// Effects ("juice"). Motion lives in effects.m; this view only triggers and draws.
+@property (nonatomic) BOOL fxCountUp;                  // new readings count up from 0
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *shownRemaining, *fxTargets, *fxPrevTargets;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSValue *> *cellFrames;
+@property (nonatomic) CGFloat pressX, pressT;          // ripple where a bar was touched
+@property (nonatomic) double fxClock, glossAt, collisionCooldown;
+@property (nonatomic) CGFloat claudeSpin, gptSpin;     // 0..1 coin-flip progress on a combo
+@property (nonatomic) CGFloat claudeBadgeT, gptBadgeT; // "×3" combo badge
+@property (nonatomic) int claudeBadgeN, gptBadgeN;
+- (void)advanceFX:(double)dt;
+- (void)tapMascot:(MascotTarget)target;
+- (void)pressBarAt:(CGFloat)tx;
 @end
 
-@implementation PetView
+@implementation PetView {
+    FXSystem *_fx;
+    FXHop _claudeHop, _gptHop;
+}
+
+- (void)dealloc { free(_fx); }
 
 - (instancetype)initWithFrame:(NSRect)f {
     if ((self = [super initWithFrame:f])) {
@@ -178,6 +196,14 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
         _act = ActWalk;
         _nextActAt = 4.0;
         _lastClipIdx = -1;
+        _fx = calloc(1, sizeof(FXSystem));
+        FXInit(_fx, 0x5eed1234u);
+        FXHopInit(&_claudeHop); FXHopInit(&_gptHop);
+        _shownRemaining = [NSMutableDictionary new];
+        _fxTargets = [NSMutableDictionary new];
+        _fxPrevTargets = [NSMutableDictionary new];
+        _cellFrames = [NSMutableDictionary new];
+        _glossAt = 2.5;
         // Without this the view gets direct touches only intermittently.
         self.allowedTouchTypes = NSTouchTypeMaskDirect;
     }
@@ -244,7 +270,10 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
     // deviceSize belong to indirect (trackpad) touches and raise here.
     CGFloat tx = [t locationInView:self].x;
     if (tx >= READ_X) {
-        if ([self beginLensAt:tx]) self.lensTouchIdentity = t.identity;
+        if ([self beginLensAt:tx]) {
+            self.lensTouchIdentity = t.identity;
+            [self pressBarAt:tx];
+        }
         return;
     }
     // Both mascots get the same generous fingertip-sized hit target. If their
@@ -325,8 +354,12 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
     // A stationary release is a tap, not a throw. The brief sparkle gives the
     // fingertip feedback without adding buttons or hiding usage data.
     if (fabs(self.lastDragX - self.grabStartX) < 5.0) {
-        if (self.dragTarget == MascotTargetGPT) self.gptTapT = 0.65;
-        else self.claudeTapT = 0.65;
+        [self tapMascot:self.dragTarget];
+    } else if (fabs(self.dragVX) > 2.0) {
+        // A real throw: kick up dust where it leaves the finger.
+        CGFloat from = self.dragTarget == MascotTargetGPT ? self.gptX : self.x;
+        FXBurst(_fx, from, 1.5, 10, 12, 40, M_PI * 0.05, M_PI * 0.95, 0.45, 1.6, 60,
+                0.85f, 0.80f, 0.74f, FXKindPixel);
     }
     self.dragTarget = MascotTargetNone;
     self.sinceAct = 0;
@@ -358,6 +391,12 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
     MascotPair pair = { self.x, self.dir * SpeedForMood(m),
                         self.gptX, self.gptDir * gptSpeed + self.gptKick };
     if (ResolveMascotCollision(&pair, 34.0)) {
+        if (self.collisionCooldown <= 0) {
+            self.collisionCooldown = 0.8;
+            CGFloat mid = (pair.claudeX + pair.gptX) / 2.0;
+            FXBurst(_fx, mid, 22, 6, 25, 55, 0, M_PI * 2, 0.5, 3.0, 40, 1.0f, 0.92f, 0.45f, FXKindStar);
+            FXHopKick(&_claudeHop, 34); FXHopKick(&_gptHop, 34);
+        }
         self.x = pair.claudeX;
         self.gptX = pair.gptX;
         self.dir = pair.claudeVelocity < 0 ? -1 : 1;
@@ -388,8 +427,17 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
         self.x += self.throwVX * dt;
         self.throwVX *= 0.92;
         CGFloat lo = 20, hi = READ_X - (CLAWD_N * 1.95) / 2.0 - 8;
-        if (self.x < lo) { self.x = lo; self.throwVX = -self.throwVX * 0.5; self.dir = 1; }
-        if (self.x > hi) { self.x = hi; self.throwVX = -self.throwVX * 0.5; self.dir = -1; }
+        BOOL hit = NO;
+        if (self.x < lo) { self.x = lo; self.throwVX = -self.throwVX * 0.5; self.dir = 1; hit = YES; }
+        if (self.x > hi) { self.x = hi; self.throwVX = -self.throwVX * 0.5; self.dir = -1; hit = YES; }
+        if (hit && fabs(self.throwVX) > 8) {
+            FXBurst(_fx, self.x, 14, 7, 20, 50, 0, M_PI * 2, 0.45, 2.6, 30, 1.0f, 0.9f, 0.5f, FXKindStar);
+            FXHopKick(&_claudeHop, 46);
+        }
+        // Speed lines of pixel dust behind a fast slide.
+        if (fabs(self.throwVX) > 25)
+            FXBurst(_fx, self.x - (self.throwVX > 0 ? 10 : -10), 2.5, 1, 4, 10,
+                    M_PI * 0.3, M_PI * 0.7, 0.35, 1.4, 20, 0.8f, 0.75f, 0.7f, FXKindPixel);
         self.phase += dt * (fabs(self.throwVX) / 9.0);
         [self advanceGPT:dt mood:m];
         self.needsDisplay = YES;
@@ -469,6 +517,209 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
     [self advanceGPT:dt mood:m];
 
     self.needsDisplay = YES;
+}
+
+#pragma mark - Effects
+
+// Provider colours as raw components for the particle system.
+static void AccentRGB(MascotTarget who, float *r, float *g, float *b) {
+    if (who == MascotTargetGPT) { *r = 0.37f; *g = 0.70f; *b = 1.00f; }
+    else                        { *r = 1.00f; *g = 0.60f; *b = 0.42f; }
+}
+
+// A tap is a small celebration: crouch, hop, a burst of pixel confetti in the
+// mascot's colour, a shock ring and a heart. Tapping again quickly chains a
+// combo that jumps higher, throws more confetti and flips the mascot.
+- (void)tapMascot:(MascotTarget)target {
+    if (target == MascotTargetNone) return;
+    BOOL gpt = target == MascotTargetGPT;
+    FXHop *hop = gpt ? &_gptHop : &_claudeHop;
+    int combo = FXHopKick(hop, 48);
+    CGFloat x = gpt ? self.gptX : self.x;
+    float r, g, b; AccentRGB(target, &r, &g, &b);
+    int extra = MIN(combo - 1, 4);
+
+    // Two fountains from the shoulders, so the confetti frames the face
+    // instead of covering it.
+    int each = 6 + extra * 3;
+    FXBurst(_fx, x + 9, 20, each, 30, 70 + extra * 10, M_PI * 0.05, M_PI * 0.42,
+            0.75, 1.8, 120, r, g, b, FXKindPixel);
+    FXBurst(_fx, x - 9, 20, each, 30, 70 + extra * 10, M_PI * 0.58, M_PI * 0.95,
+            0.75, 1.8, 120, r, g, b, FXKindPixel);
+    FXBurst(_fx, x + 11, 18, 2 + extra, 40, 90, -M_PI * 0.25, M_PI * 0.4, 0.3, 2.0, 0, 1, 1, 1, FXKindSpark);
+    FXBurst(_fx, x - 11, 18, 2 + extra, 40, 90, M_PI * 0.6, M_PI * 1.25, 0.3, 2.0, 0, 1, 1, 1, FXKindSpark);
+    // A shock ring on the ground under the feet.
+    FXParticle ring = { .x = x, .y = 1.2, .life = 0.45, .maxLife = 0.45, .size = 17 + extra * 3,
+                        .r = r, .g = g, .b = b, .kind = FXKindRing };
+    FXEmit(_fx, ring);
+    CGFloat side = FXRandom(_fx) < 0.5 ? -1 : 1;
+    FXParticle heart = { .x = x + side * 13, .y = 16, .vx = side * 8, .vy = 14,
+                         .life = 0.9, .maxLife = 0.9, .size = 1.0, .drag = 0.4,
+                         .r = 1.0f, .g = 0.36f, .b = 0.52f, .kind = FXKindHeart };
+    FXEmit(_fx, heart);
+
+    if (combo >= 2) {
+        if (gpt) { self.gptBadgeT = 0.8; self.gptBadgeN = combo; }
+        else     { self.claudeBadgeT = 0.8; self.claudeBadgeN = combo; }
+    }
+    if (combo >= 3) {
+        if (gpt) self.gptSpin = 1.0; else self.claudeSpin = 1.0;
+        FXBurst(_fx, x + 12, 22, 3 + extra, 30, 70, -M_PI * 0.2, M_PI * 0.45, 0.6, 3.2, 20, 1.0f, 0.92f, 0.45f, FXKindStar);
+        FXBurst(_fx, x - 12, 22, 3 + extra, 30, 70, M_PI * 0.55, M_PI * 1.2, 0.6, 3.2, 20, 1.0f, 0.92f, 0.45f, FXKindStar);
+    }
+    self.needsDisplay = YES;
+}
+
+// Touching a bar ripples from the fingertip, throws sparks off the fill and
+// makes both mascots turn and hop toward the readout.
+- (void)pressBarAt:(CGFloat)tx {
+    self.pressX = tx; self.pressT = 0.55;
+    NSArray *cells = [self usageCells];
+    CGFloat w = (READ_W - CELL_GAP * (cells.count - 1)) / MAX(1, cells.count);
+    NSInteger i = (NSInteger)floor((tx - READ_X) / (w + CELL_GAP));
+    float r = 1, g = 1, b = 1;
+    if (i >= 0 && i < (NSInteger)cells.count) {
+        AccentRGB([cells[i][4] isEqualToString:@"codex"] ? MascotTargetGPT : MascotTargetClaude, &r, &g, &b);
+    }
+    FXBurst(_fx, tx, BAR_Y + BAR_H, 14, 25, 70, M_PI * 0.1, M_PI * 0.9, 0.55, 2.0, 90, r, g, b, FXKindSpark);
+    FXBurst(_fx, tx, BAR_Y + BAR_H / 2, 8, 15, 45, 0, M_PI * 2, 0.6, 1.5, 40, 1, 1, 1, FXKindPixel);
+    if (!self.dragging) {
+        if (self.act == ActWalk) self.dir = 1;
+        self.gptDir = 1;
+        self.resetLookTime = MAX(self.resetLookTime, 0.9);
+        if (!FXHopIsActive(&_claudeHop)) FXHopKick(&_claudeHop, 38);
+        if (!FXHopIsActive(&_gptHop)) FXHopKick(&_gptHop, 38);
+    }
+    self.needsDisplay = YES;
+}
+
+// 60fps: particles, hops, tweens and the occasional gloss sweep. Requests a
+// redraw only while something is actually moving, so an idle bar stays cheap.
+- (void)advanceFX:(double)dt {
+    self.fxClock += dt;
+    self.collisionCooldown = MAX(0, self.collisionCooldown - dt);
+    BOOL active = FXAdvance(_fx, dt) > 0;
+
+    if (FXHopAdvance(&_claudeHop, dt))
+        FXBurst(_fx, self.x, 1.5, 6, 10, 30, M_PI * 0.1, M_PI * 0.9, 0.35, 1.4, 60, 0.85f, 0.8f, 0.74f, FXKindPixel);
+    if (FXHopAdvance(&_gptHop, dt))
+        FXBurst(_fx, self.gptX, 1.5, 6, 10, 30, M_PI * 0.1, M_PI * 0.9, 0.35, 1.4, 60, 0.75f, 0.82f, 0.95f, FXKindPixel);
+    active |= FXHopIsActive(&_claudeHop) || FXHopIsActive(&_gptHop);
+
+    self.claudeSpin = MAX(0, self.claudeSpin - dt / 0.5);
+    self.gptSpin = MAX(0, self.gptSpin - dt / 0.5);
+    self.claudeBadgeT = MAX(0, self.claudeBadgeT - dt);
+    self.gptBadgeT = MAX(0, self.gptBadgeT - dt);
+    self.pressT = MAX(0, self.pressT - dt);
+    active |= self.claudeSpin > 0 || self.gptSpin > 0 || self.claudeBadgeT > 0 ||
+              self.gptBadgeT > 0 || self.pressT > 0;
+
+    // Readings glide to their value (and count up on first sight). A change
+    // between polls throws sparks off the end of that bar.
+    for (NSString *key in self.fxTargets) {
+        double target = self.fxTargets[key].doubleValue;
+        NSNumber *prev = self.fxPrevTargets[key];
+        if (prev && fabs(prev.doubleValue - target) >= 1) {
+            NSRect f = self.cellFrames[key].rectValue;
+            CGFloat edge = f.origin.x + f.size.width * target / 100.0;
+            FXBurst(_fx, edge, BAR_Y + BAR_H / 2, 10, 20, 60, 0, M_PI * 2, 0.6, 1.6, 50, 1, 1, 1, FXKindSpark);
+            active = YES;
+        }
+        self.fxPrevTargets[key] = @(target);
+        NSNumber *shown = self.shownRemaining[key];
+        double from = shown ? shown.doubleValue : (self.fxCountUp ? 0 : target);
+        double next = FXApproach(from, target, 5.0, dt);
+        self.shownRemaining[key] = @(next);
+        active |= next != target;
+    }
+
+    // A highlight sweeps across the bars every few seconds, staggered per cell.
+    if (self.fxClock >= self.glossAt + 2.0) self.glossAt = self.fxClock + 5.0 + FXRandom(_fx) * 3.0;
+    active |= self.fxClock >= self.glossAt;
+
+    if (active) self.needsDisplay = YES;
+}
+
+- (double)shownFor:(NSString *)key target:(double)target {
+    NSNumber *shown = self.shownRemaining[key];
+    return shown ? shown.doubleValue : (self.fxCountUp ? 0 : target);
+}
+
+static void DrawPixelHeart(CGFloat cx, CGFloat cy, CGFloat px) {
+    static const char *rows[] = {".X.X.", "XXXXX", "XXXXX", ".XXX.", "..X.."};
+    for (int r = 0; r < 5; r++)
+        for (int c = 0; c < 5; c++)
+            if (rows[r][c] == 'X')
+                NSRectFill(NSMakeRect(cx + (c - 2.5) * px, cy + (2 - r) * px, px + 0.2, px + 0.2));
+}
+
+- (void)drawParticles {
+    for (int i = 0; i < _fx->count; i++) {
+        FXParticle p = _fx->particles[i];
+        CGFloat t = p.life / p.maxLife;                  // 1 → 0
+        CGFloat alpha = MIN(1.0, t * 1.8);
+        NSColor *c = [NSColor colorWithSRGBRed:p.r green:p.g blue:p.b alpha:alpha];
+        [c set];
+        switch (p.kind) {
+            case FXKindPixel:
+                NSRectFill(NSMakeRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size));
+                break;
+            case FXKindSpark: {
+                NSBezierPath *line = [NSBezierPath bezierPath];
+                line.lineWidth = MAX(0.6, p.size * 0.45);
+                line.lineCapStyle = NSLineCapStyleRound;
+                [line moveToPoint:NSMakePoint(p.x, p.y)];
+                [line lineToPoint:NSMakePoint(p.x - p.vx * 0.035, p.y - p.vy * 0.035)];
+                [line stroke];
+                break;
+            }
+            case FXKindHeart:
+                DrawPixelHeart(p.x, p.y, 1.1 + 0.5 * (1 - t));
+                break;
+            case FXKindStar: {
+                CGFloat a = p.size * (0.6 + 0.4 * sin(t * M_PI));
+                NSRectFill(NSMakeRect(p.x - a, p.y - 0.4, 2 * a, 0.8));
+                NSRectFill(NSMakeRect(p.x - 0.4, p.y - a, 0.8, 2 * a));
+                NSRectFill(NSMakeRect(p.x - 0.7, p.y - 0.7, 1.4, 1.4));
+                break;
+            }
+            case FXKindRing: {
+                CGFloat grow = 1 - t * t;                 // ease out
+                CGFloat radius = p.size * grow;
+                NSBezierPath *ring = [NSBezierPath bezierPathWithOvalInRect:
+                    NSMakeRect(p.x - radius, p.y - radius * 0.28, radius * 2, radius * 0.56)];
+                ring.lineWidth = 1.2 * t + 0.3;
+                [[c colorWithAlphaComponent:alpha * 0.8] set];
+                [ring stroke];
+                break;
+            }
+        }
+    }
+}
+
+// A soft pool of light under each mascot (a shadow is invisible on the black
+// bar). It shrinks and fades as the mascot leaves the ground.
+static void DrawGroundGlow(CGFloat x, CGFloat height, NSColor *color) {
+    CGFloat k = MAX(0.35, 1.0 - height / 10.0);
+    NSRect r = NSMakeRect(x - 13 * k, -0.6, 26 * k, 3.2);
+    NSGradient *g = [[NSGradient alloc] initWithStartingColor:[color colorWithAlphaComponent:0.38 * k]
+                                                  endingColor:[color colorWithAlphaComponent:0]];
+    [g drawInBezierPath:[NSBezierPath bezierPathWithOvalInRect:r] relativeCenterPosition:NSZeroPoint];
+}
+
+static void DrawComboBadge(CGFloat x, CGFloat t, int n, NSColor *color) {
+    if (t <= 0 || n < 2) return;
+    CGFloat prog = 1 - t / 0.8;
+    CGFloat pop = prog < 0.2 ? 0.7 + prog * 2.5 : 1.2 - (prog - 0.2) * 0.25;
+    NSFont *font = [NSFont systemFontOfSize:9 * pop weight:NSFontWeightHeavy];
+    NSShadow *glow = [NSShadow new];
+    glow.shadowColor = [color colorWithAlphaComponent:0.9];
+    glow.shadowBlurRadius = 3;
+    NSDictionary *at = @{ NSFontAttributeName: font,
+                          NSForegroundColorAttributeName: [NSColor colorWithWhite:1 alpha:MIN(1, t * 3)],
+                          NSShadowAttributeName: glow };
+    NSString *s = [NSString stringWithFormat:@"×%d", n];
+    [s drawAtPoint:NSMakePoint(x + 9, 14 + prog * 6) withAttributes:at];
 }
 
 #pragma mark - Sprite
@@ -575,21 +826,8 @@ static void DrawGrid(const unsigned char *g, NSPoint origin, CGFloat px,
 // The user-provided bot stays raster rather than being approximated with a
 // vector icon. Nearest-neighbour interpolation keeps its deliberately chunky
 // pixels crisp at Touch Bar size.
-static void DrawTapSparkles(CGFloat x, CGFloat t, NSColor *color) {
-    if (t <= 0) return;
-    CGFloat progress = 1.0 - t / 0.65;
-    CGFloat alpha = MIN(1.0, t * 2.4);
-    [[color colorWithAlphaComponent:alpha] set];
-    for (int i = 0; i < 4; i++) {
-        CGFloat angle = (CGFloat)i * M_PI_2 + progress * 0.6;
-        CGFloat radius = 7.0 + progress * 10.0;
-        CGFloat sx = x + cos(angle) * radius;
-        CGFloat sy = 18.0 + sin(angle) * radius * 0.55;
-        NSRectFill(NSMakeRect(sx - 1.0, sy - 1.0, 2.0, 2.0));
-    }
-}
-
-static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL resting, CGFloat tapT) {
+static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL resting, CGFloat tapT,
+                          CGFloat hopY, CGFloat squash, CGFloat spin) {
     static NSImage *image;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -602,20 +840,20 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL rest
     NSImageInterpolation oldInterpolation = context.imageInterpolation;
     context.imageInterpolation = NSImageInterpolationNone;
     CGFloat bob = sin(phase * (resting ? 1.1 : 2.0)) * (resting ? 0.35 : 0.7);
-    DrawTapSparkles(x, tapT, [NSColor colorWithSRGBRed:0.37 green:0.70 blue:1.0 alpha:1.0]);
     NSRect frame = NSMakeRect(x - 15, 0.1 + bob, 30, 32.2);
-    if (direction < 0) {
-        [context saveGraphicsState];
-        NSAffineTransform *mirror = NSAffineTransform.transform;
-        [mirror translateXBy:NSMidX(frame) yBy:0];
-        [mirror scaleXBy:-1 yBy:1];
-        [mirror translateXBy:-NSMidX(frame) yBy:0];
-        [mirror concat];
-    }
+    // Squash/stretch about the feet, a coin-flip spin on a combo, and the
+    // walking mirror, all as one transform.
+    CGFloat flip = (direction < 0 ? -1 : 1) * cos(spin * 2 * M_PI);
+    [context saveGraphicsState];
+    NSAffineTransform *xf = NSAffineTransform.transform;
+    [xf translateXBy:NSMidX(frame) yBy:hopY];
+    [xf scaleXBy:flip / squash yBy:squash];
+    [xf translateXBy:-NSMidX(frame) yBy:0];
+    [xf concat];
     [image drawInRect:frame
               fromRect:NSMakeRect(0, 0, image.size.width, image.size.height)
              operation:NSCompositingOperationSourceOver fraction:1.0];
-    if (direction < 0) [context restoreGraphicsState];
+    [context restoreGraphicsState];
     context.imageInterpolation = oldInterpolation;
 }
 
@@ -653,7 +891,10 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL rest
 
     // Both characters occupy the same runway. Collision physics in advance:
     // keeps their centres apart, so drawing order never hides a collision.
-    DrawGPTMascot(self.gptX, self.resetLookTime > 0 ? 1 : self.gptDir, self.gptPhase, self.gptActivity.resting, self.gptTapT);
+    DrawGroundGlow(self.gptX, _gptHop.y, [NSColor colorWithSRGBRed:0.37 green:0.70 blue:1.0 alpha:1]);
+    DrawGroundGlow(self.x, _claudeHop.y, [NSColor colorWithSRGBRed:1.0 green:0.60 blue:0.42 alpha:1]);
+    DrawGPTMascot(self.gptX, self.resetLookTime > 0 ? 1 : self.gptDir, self.gptPhase, self.gptActivity.resting, self.gptTapT,
+                  _gptHop.y, _gptHop.squash, self.gptSpin);
 
     // Panic: motion streaks trailing behind.
     if (mood == MoodPanic) {
@@ -665,6 +906,20 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL rest
     }
 
     const unsigned char *base = kClawdClips[0].frames[0].grid;   // canonical pose
+
+    // Hop, squash/stretch about the feet, and a coin-flip spin on a combo.
+    [NSGraphicsContext saveGraphicsState];
+    {
+        NSAffineTransform *xf = NSAffineTransform.transform;
+        CGFloat sq = _claudeHop.squash;
+        // Clawd nearly fills the 30pt bar: limit the drawn lift so his head
+        // never leaves it; the squash, flip and confetti carry the jump.
+        CGFloat lift = MIN(_claudeHop.y, MAX(0, 30.8 - 2.2 - CLAWD_ROWS * 1.72 * sq));
+        [xf translateXBy:self.x yBy:2.2 + lift];
+        [xf scaleXBy:cos(self.claudeSpin * 2 * M_PI) / sq yBy:sq];
+        [xf translateXBy:-self.x yBy:-2.2];
+        [xf concat];
+    }
 
     if (self.dragging) {
         // Startled, not malfunctioning: a fast wobble with a slow sway under
@@ -718,6 +973,7 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL rest
                     cl->pal ? NO : (self.dir < 0), body, cl->pal, cl->palCount,
                     ctop, cbot);
     }
+    [NSGraphicsContext restoreGraphicsState];
 
     // Tired: a sweat drop above the head.
     if (mood == MoodTired) {
@@ -725,10 +981,13 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL rest
         NSRectFill(NSMakeRect(self.x + 8, feet.y + CLAWD_ROWS * px * 0.9, 2.4, 3.4));
     }
 
-    DrawTapSparkles(self.x, self.claudeTapT,
-                    [NSColor colorWithSRGBRed:1.0 green:0.72 blue:0.43 alpha:1.0]);
-
     [self drawReadout];
+
+    DrawComboBadge(self.x, self.claudeBadgeT, self.claudeBadgeN,
+                   [NSColor colorWithSRGBRed:1.0 green:0.60 blue:0.42 alpha:1]);
+    DrawComboBadge(self.gptX, self.gptBadgeT, self.gptBadgeN,
+                   [NSColor colorWithSRGBRed:0.37 green:0.70 blue:1.0 alpha:1]);
+    [self drawParticles];
 }
 
 static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *at) {
@@ -829,8 +1088,17 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
         CGFloat dim = [providerState isEqualToString:@"stale"] ? 0.72 : 1.0;
         BOOL selected = self.usageTapT > 0 && self.activeUsageCell == i;
         NSString *label = selected ? UsageResetDisplay([cells[i][3] intValue]) : shown;
-        [self drawCell:shown pct:[cells[i][1] intValue] provider:cells[i][4]
-                     x:READ_X + i * (cellW + CELL_GAP) width:cellW dim:dim
+        int usedPct = [cells[i][1] intValue];
+        NSString *key = cells[i][0];
+        CGFloat cellX = READ_X + i * (cellW + CELL_GAP);
+        double target = usedPct < 0 ? 0 : UsageRemainingPercent(usedPct);
+        if (usedPct >= 0) {
+            self.fxTargets[key] = @(target);
+            self.cellFrames[key] = [NSValue valueWithRect:NSMakeRect(cellX, BAR_Y, cellW, BAR_H)];
+        }
+        [self drawCell:shown pct:usedPct provider:cells[i][4]
+                 shown:[self shownFor:key target:target] index:i
+                     x:cellX width:cellW dim:dim
                   effect:(selected ? self.usageTapT / 2.5 : 0) resetLabel:label];
         int reset = [cells[i][3] intValue];
         int used = [cells[i][1] intValue];
@@ -988,10 +1256,12 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
 // readout deliberately inverts it so the bar and the number answer "how much
 // can I still use?" without mental subtraction.
 - (void)drawCell:(NSString *)label pct:(int)pct provider:(NSString *)provider
+           shown:(double)shownRemaining index:(NSInteger)index
                x:(CGFloat)x width:(CGFloat)w dim:(CGFloat)dim
           effect:(CGFloat)effect resetLabel:(NSString *)resetLabel {
     BOOL unavailable = pct < 0;
-    int remaining = UsageRemainingPercent(pct);
+    // Colour follows the real reading; the figure and fill follow the glide.
+    int remaining = unavailable ? -1 : (int)lround(shownRemaining);
     UsageRemainingLevel level = UsageRemainingLevelForUsedPercent(pct);
     NSColor *ink;
     if (level == UsageRemainingLevelCritical)
@@ -1059,6 +1329,15 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
         [[ink colorWithAlphaComponent:0.15 * effect] set];
         NSRectFill(NSInsetRect(NSMakeRect(x, barY, w, barH), -2.0, -1.2));
     }
+    // Nearly out: the bar breathes a red halo so it is noticed at a glance.
+    if (!unavailable && level == UsageRemainingLevelCritical) {
+        CGFloat pulse = 0.5 + 0.5 * sin(self.fxClock * 5.0);
+        for (int k = 3; k >= 1; k--) {
+            [[ink colorWithAlphaComponent:(0.10 + 0.14 * pulse) / k * dim] set];
+            [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(NSMakeRect(x, barY, w, barH), -k * 0.9, -k * 0.9)
+                                             xRadius:3 + k yRadius:3 + k] fill];
+        }
+    }
     // The track is the 100% reference, not decoration — keep it readable.
     NSBezierPath *track = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(x, barY, w, barH) xRadius:3 yRadius:3];
     if (unavailable) {
@@ -1084,7 +1363,7 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
         [track fill];
     }
 
-    CGFloat fillW = unavailable ? 0 : w * remaining / 100.0;
+    CGFloat fillW = unavailable ? 0 : w * MAX(0, MIN(100, shownRemaining)) / 100.0;
     if (fillW > 0) {
         [NSGraphicsContext saveGraphicsState];
         [track addClip];
@@ -1095,6 +1374,56 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
         [gradient drawInRect:NSMakeRect(x, barY, w, barH) angle:90];
         [[NSColor colorWithWhite:1 alpha:0.15 * dim] set];
         NSRectFill(NSMakeRect(x, barY + barH - 1, fillW, 0.5));
+
+        // Gloss: a slanted highlight runs along the fill every few seconds,
+        // each cell a beat after the previous one.
+        double local = (self.fxClock - self.glossAt - index * 0.14) / 0.9;
+        if (local >= 0 && local <= 1) {
+            CGFloat bx = x - 16 + local * (fillW + 32);
+            NSGradient *shine = [[NSGradient alloc] initWithColorsAndLocations:
+                [NSColor colorWithWhite:1 alpha:0], 0.0,
+                [NSColor colorWithWhite:1 alpha:0.55 * dim], 0.5,
+                [NSColor colorWithWhite:1 alpha:0], 1.0, nil];
+            NSAffineTransform *slant = NSAffineTransform.transform;
+            NSBezierPath *band = [NSBezierPath bezierPathWithRect:NSMakeRect(bx - 7, barY - 2, 14, barH + 4)];
+            [slant translateXBy:bx yBy:barY + barH / 2];
+            [slant rotateByDegrees:-22];
+            [slant translateXBy:-bx yBy:-(barY + barH / 2)];
+            [band transformUsingAffineTransform:slant];
+            [shine drawInBezierPath:band angle:0];
+        }
+        [NSGraphicsContext restoreGraphicsState];
+
+        // A lit leading edge makes the fill read as live liquid, not paint.
+        if (fillW < w - 1) {
+            [NSGraphicsContext saveGraphicsState];
+            [track addClip];
+            CGFloat flicker = 0.75 + 0.25 * sin(self.fxClock * 7.0 + index);
+            [[top colorWithAlphaComponent:0.30 * flicker * dim] set];
+            NSRectFill(NSMakeRect(x + fillW - 1.5, barY, 4.0, barH));
+            [[NSColor colorWithWhite:1 alpha:0.75 * flicker * dim] set];
+            NSRectFill(NSMakeRect(x + fillW - 0.9, barY + 0.5, 1.0, barH - 1));
+            [NSGraphicsContext restoreGraphicsState];
+        }
+    }
+
+    // Ripple from the fingertip, and a brief flash of the whole bar.
+    if (self.pressT > 0 && self.pressX >= x && self.pressX <= x + w) {
+        CGFloat prog = 1 - self.pressT / 0.55;
+        [NSGraphicsContext saveGraphicsState];
+        NSRectClip(NSMakeRect(x - 3, 0, w + 6, kSceneH));
+        [[NSColor colorWithWhite:1 alpha:0.30 * (1 - prog)] set];
+        [track fill];
+        for (int k = 0; k < 2; k++) {
+            CGFloat pr = prog - k * 0.18;
+            if (pr <= 0) continue;
+            CGFloat r = 3 + pr * w * 0.55;
+            NSBezierPath *ring = [NSBezierPath bezierPathWithOvalInRect:
+                NSMakeRect(self.pressX - r, barY + barH / 2 - r * 0.42, 2 * r, r * 0.84)];
+            ring.lineWidth = 1.4 * (1 - pr) + 0.3;
+            [[[ink blendedColorWithFraction:0.5 ofColor:NSColor.whiteColor] colorWithAlphaComponent:0.9 * (1 - pr)] setStroke];
+            [ring stroke];
+        }
         [NSGraphicsContext restoreGraphicsState];
     }
 
@@ -1332,6 +1661,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
     }
 
     self.pet = [[PetView alloc] initWithFrame:NSMakeRect(0, 0, kSceneW, kSceneH)];
+    self.pet.fxCountUp = YES;   // the live bar counts its readings up on arrival
     if (self.demoMode) {
         UsageProvider *claude = DemoUsageProvider(@"claude");
         UsageProvider *codex = DemoUsageProvider(@"codex");
@@ -1424,6 +1754,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
     self.lastFrame = now;
 
     [self.pet advanceLens:dt];
+    [self.pet advanceFX:dt];
     self.petFrameAccumulator += dt;
     while (self.petFrameAccumulator >= 1.0 / kFPS) {
         [self.pet advance:1.0 / kFPS];
@@ -1658,8 +1989,9 @@ static int RenderFilm(NSString *dir, double secs, BOOL lensFilm) {
             if (i == 480) { v.p5 = 94; v.resetMin = 12; [v beginLensAt:READ_X + 28]; }
             if (i == 564) [v.lens end];
             [v advanceLens:1.0 / fps];
+            [v advanceFX:1.0 / fps];
             if (i % 4 == 0) [v advance:1.0 / kFPS];
-        } else [v advance:1.0 / kFPS];
+        } else { [v advance:1.0 / kFPS]; [v advanceFX:1.0 / kFPS]; }
         NSImage *layer = [[NSImage alloc] initWithSize:v.bounds.size];
         [layer lockFocus]; [v drawRect:v.bounds]; [layer unlockFocus];
         NSImage *img = [[NSImage alloc] initWithSize:v.bounds.size];
@@ -1674,6 +2006,47 @@ static int RenderFilm(NSString *dir, double secs, BOOL lensFilm) {
                          [NSString stringWithFormat:@"f%04d.png", i]] atomically:YES];
     }
     printf("%d frames at %.0f fps -> %s\n", n, fps, dir.UTF8String);
+    return 0;
+}
+
+// `--film-fx <dir>`: a scripted tour of the effects at 60fps — count-up on
+// arrival, mascot taps building a combo, a bar press, a collision, a throw
+// into the wall, a reading changing between polls, and the critical pulse.
+static int RenderFilmFX(NSString *dir) {
+    [NSFileManager.defaultManager createDirectoryAtPath:dir
+                            withIntermediateDirectories:YES attributes:nil error:nil];
+    PetView *v = [[PetView alloc] initWithFrame:NSMakeRect(0, 0, kSceneW, kSceneH)];
+    v.fxCountUp = YES;
+    v.p5 = 26; v.p7 = 47; v.resetMin = 125; v.reset7dMin = 3000; v.plan = @"max_20x";
+    v.state = @"ok"; v.haveData = YES; v.x = 50; v.dir = 1;
+    v.codexP5 = 18; v.codexP7 = 42; v.codexResetMin = 44; v.codexReset7dMin = 5000;
+    v.codexState = @"ok"; v.codexHaveData = YES; v.codexPlan = @"plus"; v.gptX = 130;
+    double fps = 60;
+    int n = (int)(12 * fps);
+    for (int i = 0; i < n; i++) {
+        double t = i / fps;
+        if (i == (int)(1.6 * fps) || i == (int)(1.85 * fps) || i == (int)(2.1 * fps)) [v tapMascot:MascotTargetClaude];
+        if (i == (int)(3.0 * fps)) [v tapMascot:MascotTargetGPT];
+        if (i == (int)(4.0 * fps)) { [v pressBarAt:READ_X + 60]; }
+        if (i == (int)(5.5 * fps)) { v.x = v.gptX - 40; v.dir = 1; v.gptDir = -1; }
+        if (i == (int)(7.0 * fps)) { v.throwVX = 260; v.act = ActWalk; }
+        if (i == (int)(9.0 * fps)) { v.codexP7 = 12; v.p5 = 92; }
+        [v advanceLens:1.0 / fps];
+        [v advanceFX:1.0 / fps];
+        if (i % 4 == 0) [v advance:1.0 / kFPS];
+        (void)t;
+        NSImage *layer = [[NSImage alloc] initWithSize:v.bounds.size];
+        [layer lockFocus]; [v drawRect:v.bounds]; [layer unlockFocus];
+        NSImage *img = [[NSImage alloc] initWithSize:v.bounds.size];
+        [img lockFocus];
+        [NSColor.blackColor set]; NSRectFill(v.bounds);
+        [layer drawInRect:v.bounds fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
+        [img unlockFocus];
+        NSBitmapImageRep *out = [[NSBitmapImageRep alloc] initWithData:img.TIFFRepresentation];
+        [[out representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
+            writeToFile:[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"f%04d.png", i]] atomically:YES];
+    }
+    printf("%d frames at 60 fps -> %s\n", n, dir.UTF8String);
     return 0;
 }
 
@@ -1765,6 +2138,10 @@ static BOOL HasOption(int argc, const char **argv, const char *option) {
 
 int main(int argc, const char **argv) {
     @autoreleasepool {
+        if (argc == 3 && strcmp(argv[1], "--film-fx") == 0) {
+            [NSApplication sharedApplication];
+            return RenderFilmFX(@(argv[2]));
+        }
         if (argc == 3 && strcmp(argv[1], "--film-drag") == 0) {
             [NSApplication sharedApplication];
             return RenderFilmDrag(@(argv[2]));

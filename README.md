@@ -23,6 +23,16 @@ expired, unavailable, and stale provider data.
 This reports **Claude Code and Codex agentic allowances**, not general ChatGPT
 web-chat message caps or API billing usage.
 
+Everything answers a fingertip. Tap a mascot and it crouches, hops and throws
+pixel confetti in its own colour with a ground shock-ring and a heart; tap
+again quickly to chain a combo (`×2`, `×3`…) that flips it like a coin. Throws
+kick up dust and bounce off the wall with stars, and the two bump with a
+twinkle when they collide. Touching a bar ripples from the fingertip, sprays
+sparks and makes both mascots turn and hop toward it. Readings count up when
+they arrive and glide when they change, a highlight sweeps along the bars every
+few seconds, and a bar that is nearly exhausted breathes a red halo. Preview it
+all with `./ClaudeTouchBar.app/Contents/MacOS/ClaudeTouchBar --film-fx /tmp/fx`.
+
 The creatures' behaviour is the gauge too: they stroll when you are under 30%,
 pick up the pace past that, tire past 60%, and panic past 85%. GPT alternates
 between walking and short idle rests; tap either mascot for a small sparkle,
