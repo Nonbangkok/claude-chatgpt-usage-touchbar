@@ -33,7 +33,7 @@ change, a highlight sweeps along the bars every few seconds, and a bar that is
 nearly exhausted breathes a red halo. Preview it
 all with `./ClaudeTouchBar.app/Contents/MacOS/ClaudeTouchBar --film-fx /tmp/fx`.
 
-Behind the runway is a night sky: three depths of pixel stars that breathe
+Behind the runway is a flat purple night sky: three depths of pixel stars that breathe
 slowly and occasionally glint, a thin crescent moon, and a meteor every ten
 to twenty seconds. The sky drifts against Clawd's travel, nearer stars faster,
 so his pacing reads as a journey. It fades to black before the readout, which
