@@ -75,9 +75,9 @@ static inline int ParseUsageLine(const char *text, size_t length,
         !UsageInteger(fields[3], 525600, &candidate.resetMin) ||
         !UsageInteger(fields[4], 525600, &candidate.reset7dMin) ||
         !UsageInteger(fields[5], INT_MAX, &candidate.ageSec)) return 0;
-    // The script reports 0 (never -1) for a percentage it does not have; the
-    // -1 sentinel is only meaningful for reset times and age.
-    if (candidate.p5 < 0 || candidate.p7 < 0) return 0;
+    // -1 means "this window is not reported" (e.g. no active five-hour window:
+    // the API sends `five_hour: null`). The view draws it as an em dash, so it
+    // must not discard the other window's valid reading.
     if (!(UsageTokenEquals(fields[6], "ok") || UsageTokenEquals(fields[6], "stale") ||
           UsageTokenEquals(fields[6], "expired") || UsageTokenEquals(fields[6], "none"))) return 0;
     memcpy(candidate.state, fields[6].text, fields[6].length);

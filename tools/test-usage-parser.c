@@ -70,6 +70,9 @@ int main(void) {
     good_claude("claude 37 8 20 100 0 ok", 37, 8, 20, 100, 0, "ok");
     good_claude("claude 0 0 -1 -1 -1 expired\n", 0, 0, -1, -1, -1, "expired");
     good_claude("claude 0 0 -1 -1 -1 none\n", 0, 0, -1, -1, -1, "none");
+    /* A window the API does not report is -1; the other window must survive. */
+    good_claude("claude -1 41 -1 1832 4 ok\n", -1, 41, -1, 1832, 4, "ok");
+    good_claude("claude 12 -1 30 -1 4 ok\n", 12, -1, 30, -1, 4, "ok");
     good_claude("claude 0000000008 009 020 030 000 ok\n", 8, 9, 20, 30, 0, "ok");
     good_claude("claude 0 100 525600 525600 0 ok\n", 0, 100, 525600, 525600, 0, "ok");
     good_claude("  \tclaude\t37 8  20\t100 0 ok \t\r\n", 37, 8, 20, 100, 0, "ok");
@@ -88,7 +91,6 @@ int main(void) {
     bad("claude 37 8 20 100 0 unknown\n"); bad("claude 37 8 20 100 0 okkkkkkk\n");
     bad("gemini 37 8 20 100 0 ok\n"); bad("Claude 37 8 20 100 0 ok\n");
     bad("claudex 37 8 20 100 0 ok\n"); bad("37 8 20 100 0 ok\n");
-    bad("claude -1 8 20 100 0 ok\n"); bad("claude 37 -1 20 100 0 ok\n");
     bad("claude 37 8 20 100 0 ok\v\n");
     bad("claude 37 8 20 100 0 ok;touch /tmp/x\n");
     bad("claude 37 8 20 100 0 caf\xc3\xa9\n");
@@ -182,8 +184,8 @@ int main(void) {
             for (int provider = 0; provider < 2; provider++) {
                 if (!result_out.valid[provider]) continue;
                 const UsageReading *r = &result_out.reading[provider];
-                assert(r->p5 >= 0 && r->p5 <= 100);
-                assert(r->p7 >= 0 && r->p7 <= 100);
+                assert(r->p5 >= -1 && r->p5 <= 100);
+                assert(r->p7 >= -1 && r->p7 <= 100);
                 assert(r->resetMin >= -1 && r->resetMin <= 525600);
                 assert(r->reset7dMin >= -1 && r->reset7dMin <= 525600);
                 assert(r->ageSec >= -1);

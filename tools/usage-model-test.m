@@ -26,6 +26,11 @@ int main(void) {
                 @"Codex five-hour, seven-day reset, and age are parsed");
         require(usage.available, @"ok record is available");
 
+        usage = ParseUsageRecord(@"codex -1 0 -1 43200 0 ok");
+        require(usage != nil && usage.p5 == -1 && usage.p7 == 0 && usage.available,
+                @"an unreported 5h window does not discard the weekly reading");
+        usage = ParseUsageRecord(@"codex 18 42 44 6150 0 ok");
+
         require(ParseUsageRecord(@"unknown 99 99 0 0 ok") == nil,
                 @"unknown providers are rejected");
         require(usage.p5 == 18 && usage.p7 == 42,
