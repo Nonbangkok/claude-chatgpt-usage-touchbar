@@ -46,8 +46,10 @@ int main(void) {
 
         usage = ParseUsageRecord(@"claude 37 53 -1 100 0 ok 7 max_20x");
         require([usage.plan isEqualToString:@"max_20x"], @"the plan token is preserved");
-        require([UsagePlanDisplay(usage.plan) isEqualToString:@"Max 20x"],
-                @"max_20x is shown as Max 20x, not Max 20X");
+        require([UsagePlanDisplay(usage.plan) isEqualToString:@"Ultra"],
+                @"max_20x is shown as Ultra");
+        require([UsagePlanDisplay(@"max_5x") isEqualToString:@"Max 5x"],
+                @"other Max tiers keep their name, with a lower-case x");
         require([UsagePlanDisplay(@"free") isEqualToString:@"Free"] &&
                 [UsagePlanDisplay(@"plus") isEqualToString:@"Plus"] &&
                 [UsagePlanDisplay(@"pro") isEqualToString:@"Pro"],

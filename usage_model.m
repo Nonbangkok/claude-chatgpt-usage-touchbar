@@ -93,6 +93,8 @@ NSString *UsagePeriodLabel(int days) {
 
 NSString *UsagePlanDisplay(NSString *plan) {
     if (plan.length == 0 || [plan isEqualToString:@"-"]) return nil;
+    // Max 20x is marketed as Ultra; the cache keeps the stable token.
+    if ([plan isEqualToString:@"max_20x"]) return @"Ultra";
     NSString *spaced = [plan stringByReplacingOccurrencesOfString:@"_" withString:@" "];
     // Only the first letter: "max 20x" -> "Max 20x" (capitalizedString would
     // turn it into "Max 20X").
