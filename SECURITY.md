@@ -19,12 +19,16 @@ and asks for no new access. On most machines `/usr/bin/security` is already a
 trusted application on that item, so no dialog appears; if one does, it will
 name `security`.
 
-From the returned JSON only `claudeAiOauth.accessToken` and
-`claudeAiOauth.expiresAt` are used. `refreshToken` is never read.
+From the returned JSON only `claudeAiOauth.accessToken`,
+`claudeAiOauth.expiresAt`, and the plan labels `subscriptionType` and
+`rateLimitTier` (reduced to a token such as `max_20x`) are used.
+`refreshToken` is never read.
 
 For Codex, the script reads `${CODEX_HOME:-~/.codex}/auth.json` read-only. From
 that JSON it uses only `tokens.access_token` and optional `tokens.account_id`.
-It does not update the credential file or run a token refresh command.
+It does not update the credential file or run a token refresh command. From
+the usage response it keeps the percentages, reset times, the window length
+and the `plan_type` label.
 
 ## Where the token goes
 
@@ -65,7 +69,7 @@ Nothing, with respect to your credentials. `ClaudeTouchBar.app`:
 - never links `Security.framework` and never calls any keychain API
 - opens no sockets — it has no networking code at all
 - spawns exactly one subprocess: `/bin/bash -lc ~/bin/claude-touchbar.sh --raw`
-- parses two fixed-width provider records from that output
+- parses two provider records from that output with a strict C parser
 
 The split exists so that the component with credential and network access is a
 small shell script you can audit in a sitting, rather than a compiled binary
@@ -134,12 +138,14 @@ selection also checks runtime bounds in addition to the compile-time guard.
 ## Usage-reader output
 
 The GUI uses the same portable C parser exercised by the offline tests. It
-looks backwards through stdout for the newest valid protocol line, ignoring
-login banners and trailing diagnostics. It accepts 5-7 whitespace-separated
-fields (spaces or tabs), requires a known state, checks integer syntax and ranges before
-conversion, and limits model names to 64 ASCII letters/digits or `_.-`.
-Malformed output cannot partially update a reading: if no valid line exists,
-the previous reading is retained. Inputs over 64 KiB and embedded NUL bytes
+looks backwards through stdout for the newest valid record of each provider,
+ignoring login banners and trailing diagnostics. A record is 7-9
+whitespace-separated fields (spaces or tabs): the provider name (`claude` or
+`codex`), five integers checked for syntax and range before conversion, a
+known state, an optional window length (1-3650 days) and an optional plan
+label (at most 24 ASCII letters/digits or `_.-`, starting with a letter).
+Malformed output cannot partially update a reading: a provider with no valid
+record keeps its previous reading. Inputs over 64 KiB and embedded NUL bytes
 are rejected; individual protocol lines are limited to 512 bytes.
 
 This is validation, not authentication: arbitrary output that exactly matches
@@ -160,31 +166,22 @@ the app logs and exits instead of crashing. This is also why the app can never
 be distributed through the App Store.
 
 No entitlements are requested and ad-hoc signing is sufficient. Nothing here
-needs Full Disk Access, Screen Recording, or any other TCC permission — with
-one exception you should know about before you install it.
+needs Full Disk Access, Screen Recording, Accessibility, or any other TCC
+permission.
 
-## The Escape key, and the one permission that may be asked for
+## No synthetic events
 
-Presenting a Touch Bar covers the system Escape key, so the app draws a
-replacement. Pressing it synthesises a real key event:
+An earlier version drew a replacement Escape key and pressed it by posting a
+synthetic keyboard event, which is what the Accessibility permission governs.
+That button is gone (`tools/test.sh` fails if it comes back): the app posts no
+events of any kind, so no permission dialog can be caused by it. Touches on the
+bar are handled inside the app's own view.
 
-```objc
-CGEventPost(kCGHIDEventTap, CGEventCreateKeyboardEvent(NULL, 53, true));
-```
-
-**Posting synthetic key events is exactly what the Accessibility permission
-governs.** On this machine the button works and macOS has not asked, but that
-may be because of how the event is routed on a Touch Bar rather than a general
-rule, and the behaviour has changed between macOS releases before. Treat it as:
-if a permission dialog appears, it will be *Accessibility*, it will be caused by
-pressing the Escape button, and declining it costs you only that button — the
-usage readout does not depend on it.
-
-An earlier version of this file claimed no permission could ever be requested.
-That claim was written from intent rather than from reading this code path, and
-it was the kind of unverified reassurance a security document should never
-contain. If you find any other statement here that the source does not support,
-please open an issue.
+An earlier version of this file claimed no permission could ever be requested
+while that code path still existed. That claim was written from intent rather
+than from reading the code, and it was the kind of unverified reassurance a
+security document should never contain. If you find any other statement here
+that the source does not support, please open an issue.
 
 ## Reporting
 

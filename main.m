@@ -2129,22 +2129,29 @@ static int RenderFilm(NSString *dir, double secs, BOOL lensFilm) {
     [NSFileManager.defaultManager createDirectoryAtPath:dir
                             withIntermediateDirectories:YES attributes:nil error:nil];
     PetView *v = [[PetView alloc] initWithFrame:NSMakeRect(0, 0, kSceneW, kSceneH)];
-    v.p5 = 62; v.p7 = 61; v.resetMin = 93; v.scopedPct = 61; v.scopedName = @"Fable";
+    // Illustrative sample data, chosen to exercise what the widget can show:
+    // a Claude plan with no 5h window beside a ChatGPT plan with both, so the
+    // subscription labels fit and the cells share the space unevenly.
+    v.fxCountUp = !lensFilm;
+    v.p5 = -1; v.p7 = 39; v.resetMin = -1; v.plan = @"max_20x";
     v.state = @"ok"; v.haveData = YES; v.x = 60;
-    // Film output is illustrative sample data, but it must exercise both
-    // provider readouts so the README accurately demonstrates the widget.
     v.codexP5 = 48; v.codexP7 = 57; v.codexResetMin = 126; v.codexAgeSec = 0;
-    v.codexState = @"ok"; v.codexHaveData = YES;
+    v.codexState = @"ok"; v.codexHaveData = YES; v.codexPlan = @"plus";
     v.reset7dMin = 2 * 24 * 60 + 180; v.codexReset7dMin = 4 * 24 * 60 + 120;
+    if (lensFilm) { v.p5 = 62; v.resetMin = 93; v.plan = nil; v.codexPlan = nil; }
 
     double fps = lensFilm ? 60 : kFPS;
     int n = (int)(secs * fps);
     for (int i = 0; i < n; i++) {
-        // The README film demonstrates the same bar press used in the live
-        // view, including the Codex five-hour countdown at the 7s mark.
-        if (!lensFilm && i == (int)(7 * kFPS)) {
-            v.activeUsageCell = 2;
-            v.usageTapT = 2.5;
+        // The README film: readings count in, Clawd is tapped into a combo,
+        // GPT is tapped, a bar opens its panel, Clawd is thrown, and the sky's
+        // first meteor falls at 17.8s.
+        if (!lensFilm) {
+            if (i == (int)(2.4 * kFPS) || i == (int)(2.7 * kFPS) || i == (int)(3.0 * kFPS)) [v tapMascot:MascotTargetClaude];
+            if (i == (int)(5.0 * kFPS)) [v tapMascot:MascotTargetGPT];
+            if (i == (int)(7.5 * kFPS)) [v beginLensAt:READ_X + 60];
+            if (i == (int)(8.0 * kFPS)) [v.lens end];
+            if (i == (int)(12.5 * kFPS)) { v.throwVX = 240; v.act = ActWalk; v.dir = 1; }
         }
         if (lensFilm) {
             // The same entry points as real fingers: tap, hold, scrub, release.
@@ -2163,7 +2170,7 @@ static int RenderFilm(NSString *dir, double secs, BOOL lensFilm) {
             [v advanceLens:1.0 / fps];
             [v advanceFX:1.0 / fps];
             if (i % 4 == 0) [v advance:1.0 / kFPS];
-        } else { [v advance:1.0 / kFPS]; [v advanceFX:1.0 / kFPS]; }
+        } else { [v advanceLens:1.0 / kFPS]; [v advance:1.0 / kFPS]; [v advanceFX:1.0 / kFPS]; }
         NSImage *layer = [[NSImage alloc] initWithSize:v.bounds.size];
         [layer lockFocus]; [v drawRect:v.bounds]; [layer unlockFocus];
         NSImage *img = [[NSImage alloc] initWithSize:v.bounds.size];

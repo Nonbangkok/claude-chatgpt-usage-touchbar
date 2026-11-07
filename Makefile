@@ -11,7 +11,7 @@ FLAGS := -fobjc-arc -O2 -Wall \
 AGENT := local.claude-touchbar
 PLIST := $(HOME)/Library/LaunchAgents/$(AGENT).plist
 
-.PHONY: all assets test shots poses palette ruler sweat film film-drag install-script install-agent uninstall-agent run stop clean missing-assets
+.PHONY: all assets test shots poses palette ruler sweat film film-lens film-fx film-drag social install-script install-agent uninstall-agent run stop clean missing-assets
 
 all: $(BIN)
 
@@ -128,6 +128,25 @@ film: $(BIN)
 	  ffmpeg -y -loglevel error -framerate 15 -i f%04d.png \
 	    -vf "scale=iw*2:ih*2:flags=neighbor,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse=dither=none" \
 	    -loop 0 clawd.gif && echo "$(FILM_DIR)/clawd.gif" || echo "frames in $(FILM_DIR) (brew install ffmpeg for a gif)"
+
+# 60 fps tours of the touch panel and of every effect, for checking motion.
+film-lens: $(BIN)
+	@rm -rf $(FILM_DIR)-lens && ./$(BIN) --film-lens $(FILM_DIR)-lens 10.5
+	@command -v ffmpeg >/dev/null && cd $(FILM_DIR)-lens && \
+	  ffmpeg -y -loglevel error -framerate 60 -i f%04d.png \
+	    -vf "fps=30,scale=iw*2:ih*2:flags=neighbor,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse=dither=none" \
+	    -loop 0 lens.gif && echo "$(FILM_DIR)-lens/lens.gif" || echo "frames in $(FILM_DIR)-lens"
+
+film-fx: $(BIN)
+	@rm -rf $(FILM_DIR)-fx && ./$(BIN) --film-fx $(FILM_DIR)-fx
+	@command -v ffmpeg >/dev/null && cd $(FILM_DIR)-fx && \
+	  ffmpeg -y -loglevel error -framerate 60 -i f%04d.png \
+	    -vf "fps=30,scale=iw*2:ih*2:flags=neighbor,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse=dither=none" \
+	    -loop 0 fx.gif && echo "$(FILM_DIR)-fx/fx.gif" || echo "frames in $(FILM_DIR)-fx"
+
+# The social card: two stills from the film with a title, for link previews.
+social: film
+	@python3 tools/make-social.py $(FILM_DIR) docs/social.png
 
 film-drag: $(BIN)
 	@rm -rf $(FILM_DIR)-drag && ./$(BIN) --film-drag $(FILM_DIR)-drag
