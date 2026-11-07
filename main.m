@@ -854,8 +854,8 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL rest
     context.imageInterpolation = oldInterpolation;
 }
 
-// The sky lives behind the runway only; it fades to black well before the
-// readout so the numbers stay on the dark panel they were designed for.
+// The sky lives behind the runway only and stops at a clean edge where the
+// readout begins, so the numbers keep their dark panel.
 - (void)drawNightSky {
     CGFloat skyW = READ_X - 4;
     NSRect sky = NSMakeRect(0, 0, skyW, kSceneH);
@@ -924,10 +924,6 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL rest
         [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(hx - 1.1, hy - 1.1, 2.2, 2.2)] fill];
     }
 
-    // Fade the sky out before the readout.
-    NSGradient *edge = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithWhite:0 alpha:0]
-                                                    endingColor:[NSColor colorWithWhite:0 alpha:1]];
-    [edge drawInRect:NSMakeRect(skyW - 46, 0, 46, kSceneH) angle:0];
     [NSGraphicsContext restoreGraphicsState];
 }
 

@@ -36,7 +36,7 @@ all with `./ClaudeTouchBar.app/Contents/MacOS/ClaudeTouchBar --film-fx /tmp/fx`.
 Behind the runway is a night sky: three depths of pixel stars that breathe
 slowly and occasionally glint, a thin crescent moon, and a meteor every ten
 to twenty seconds. The sky drifts against Clawd's travel, nearer stars faster,
-so his pacing reads as a journey. It fades to black before the readout, which
+so his pacing reads as a journey. It ends where the readout begins, which
 stays on the dark panel the numbers were designed for.
 
 The creatures' behaviour is the gauge too: they stroll when you are under 30%,
