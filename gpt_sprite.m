@@ -8,12 +8,13 @@ const unsigned char kGPTPalette[GPTInkCount][3] = {
     {176, 244, 244},    // glowing symbol
     {82, 109, 183},     // shade under the head, arms
     {250, 252, 255},    // the catchlight in each eye
+    {12, 12, 20},       // the eyes themselves
 };
 
 // '.' empty  '1' body  '2' visor  '3' glow  '4' shade.
 // Chibi proportions: a small round cloud of a head on a chubby body with
 // stubby legs. The visor (rows 6-9, cols 6-12) is blank here; faces paint
-// big square eyes into it, each with a catchlight. The chest wears the >_
+// big dark eyes into it, each with a catchlight. The chest wears the >_
 // of the original (rows 12-14).
 static const char *kBase[GPT_N] = {
     "....................",
@@ -28,9 +29,9 @@ static const char *kBase[GPT_N] = {
     "....11222222211.....",   // 9
     ".....111111111......",   // 10 chin
     "......4444444.......",   // 11 shade under the head
-    ".....411111114......",   // 12 arms (shade) hug the body
-    ".....411111114......",   // 13
-    ".....411111114......",   // 14
+    ".....411111114......",   // 12 arms: from the shoulders...
+    "....4.1111111.4.....",   // 13 ...spreading out and down
+    "...4..1111111..4....",   // 14
     "......1111111.......",   // 15
     "......11...11.......",   // 16 legs
     "......11...11.......",   // 17
@@ -45,12 +46,12 @@ static void Put(unsigned char *g, int r, int c, unsigned char v) {
 static void PaintFace(unsigned char *g, GPTFace face) {
     switch (face) {
         case GPTFaceNormal:                      // two big square eyes, catchlight top-left
-            Put(g, 7, 7, 5); Put(g, 7, 8, 3); Put(g, 8, 7, 3); Put(g, 8, 8, 3);
-            Put(g, 7, 10, 5); Put(g, 7, 11, 3); Put(g, 8, 10, 3); Put(g, 8, 11, 3);
+            Put(g, 7, 7, 5); Put(g, 7, 8, 6); Put(g, 8, 7, 6); Put(g, 8, 8, 6);
+            Put(g, 7, 10, 5); Put(g, 7, 11, 6); Put(g, 8, 10, 6); Put(g, 8, 11, 6);
             break;
         case GPTFaceLook:                        // the same, one cell toward the right
-            Put(g, 7, 8, 5); Put(g, 7, 9, 3); Put(g, 8, 8, 3); Put(g, 8, 9, 3);
-            Put(g, 7, 11, 5); Put(g, 7, 12, 3); Put(g, 8, 11, 3); Put(g, 8, 12, 3);
+            Put(g, 7, 8, 5); Put(g, 7, 9, 6); Put(g, 8, 8, 6); Put(g, 8, 9, 6);
+            Put(g, 7, 11, 5); Put(g, 7, 12, 6); Put(g, 8, 11, 6); Put(g, 8, 12, 6);
             break;
         case GPTFaceBlink:                       // - -
             Put(g, 8, 7, 3); Put(g, 8, 8, 3); Put(g, 8, 10, 3); Put(g, 8, 11, 3);
@@ -61,8 +62,8 @@ static void PaintFace(unsigned char *g, GPTFace face) {
             Put(g, 9, 8, 3); Put(g, 9, 9, 3); Put(g, 9, 10, 3);
             break;
         case GPTFaceSurprised:                   // eyes plus a little o mouth
-            Put(g, 7, 7, 5); Put(g, 7, 8, 3); Put(g, 8, 7, 3); Put(g, 8, 8, 3);
-            Put(g, 7, 10, 5); Put(g, 7, 11, 3); Put(g, 8, 10, 3); Put(g, 8, 11, 3);
+            Put(g, 7, 7, 5); Put(g, 7, 8, 6); Put(g, 8, 7, 6); Put(g, 8, 8, 6);
+            Put(g, 7, 10, 5); Put(g, 7, 11, 6); Put(g, 8, 10, 6); Put(g, 8, 11, 6);
             Put(g, 9, 9, 3);
             break;
         case GPTFaceSleepy:                      // half-closed, dimmer
