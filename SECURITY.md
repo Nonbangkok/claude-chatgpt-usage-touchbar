@@ -91,15 +91,57 @@ this page.
 
 ## What is cached
 
-`/tmp/.claude-usage-$UID` and `/tmp/.codex-usage-$UID`, both mode `0600`,
-contain only derived whitespace-separated values:
+Two files, both mode `0600`, in a private `0700` directory
+`~/.claude-usage-touchbar/`, containing only derived whitespace-separated
+values:
 
 ```
-<5h%> <7d%> <resetMinutes> <unixTimestamp>
+usage        <5h%> <7d%> <5hResetMin> <7dResetMin> <scoped%> <model> <unixTimestamp>   (Claude)
+codex-usage  <5h%> <7d%> <5hResetMin> <7dResetMin> <unixTimestamp>                      (Codex)
 ```
 
-Percentages and a timestamp. No token, account ID, or other identifier is
+Percentages, reset times, a sanitized model name (`[A-Za-z0-9_.-]`, at most 64
+characters) and a timestamp. No token, account ID, or other identifier is
 cached. Delete either file whenever you like; it is rebuilt within a minute.
+
+The old shared `/tmp/.claude-usage-$UID` and `/tmp/.codex-usage-$UID` files are
+never read or migrated.
+Cache paths are opened relative to verified directory descriptors, without
+following symlinks. The home and cache directories must belong to the current
+user and must not be writable by other users. Cache records are size-limited,
+validated and normalized before any value reaches shell arithmetic. Writes
+use a new private file and an atomic rename, not truncation of an existing path.
+
+## Build-time assets
+
+Pose downloads are untrusted input, not executable code. The asset extractor
+checks SHA-256 pins and parses only a restricted data-expression grammar with
+locally implemented grid operations; it never evaluates JavaScript. It fails
+closed on unsupported source syntax or invalid data, requires the
+complete ordered set of 13 clips, and replaces the generated header only after
+all validation succeeds. The native build also rejects partial clip tables.
+These checks do not grant a licence to redistribute the artwork.
+
+The activity assertion keeps animation responsive without disabling macOS
+idle sleep. Frame updates pause while the screen is locked or the display is
+asleep; display wake alone does not clear the separate lock state. Clip
+selection also checks runtime bounds in addition to the compile-time guard.
+
+## Usage-reader output
+
+The GUI uses the same portable C parser exercised by the offline tests. It
+looks backwards through stdout for the newest valid protocol line, ignoring
+login banners and trailing diagnostics. It accepts 5-7 whitespace-separated
+fields (spaces or tabs), requires a known state, checks integer syntax and ranges before
+conversion, and limits model names to 64 ASCII letters/digits or `_.-`.
+Malformed output cannot partially update a reading: if no valid line exists,
+the previous reading is retained. Inputs over 64 KiB and embedded NUL bytes
+are rejected; individual protocol lines are limited to 512 bytes.
+
+This is validation, not authentication: arbitrary output that exactly matches
+the protocol cannot be distinguished from the reader's own line. The script
+and the user's login files remain trusted local code. The line-oriented fix
+was prompted by @xmihal03's report and PR #1.
 
 ## Private API
 
@@ -145,3 +187,4 @@ please open an issue.
 Open a GitHub issue. This is a personal project maintained on a best-effort
 basis — if you need a guaranteed response window, this is not the right
 dependency for you.
+

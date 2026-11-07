@@ -1,0 +1,116 @@
+// Strict, portable parser for claude-touchbar.sh --raw output.
+// The line-oriented approach builds on @xmihal03's PR #1. Scan backwards
+// so both login banners and trailing shell diagnostics can be ignored.
+//
+// Protocol: one record per provider, six fields after the provider name:
+//   "<claude|codex> <5h%> <7d%> <5hResetMin> <7dResetMin> <ageSec> <state>"
+// The newest valid record of each provider wins; anything else is noise.
+#pragma once
+#include <limits.h>
+#include <stddef.h>
+#include <string.h>
+
+typedef enum { UsageProviderClaude = 0, UsageProviderCodex = 1 } UsageProviderID;
+
+typedef struct {
+    int p5, p7, resetMin, reset7dMin, ageSec;
+    char state[8];
+} UsageReading;
+
+typedef struct {
+    UsageReading reading[2];
+    int valid[2];                       // indexed by UsageProviderID
+} UsageOutput;
+
+typedef struct { const char *text; size_t length; } UsageToken;
+
+static inline int UsageTokenEquals(UsageToken token, const char *value) {
+    return token.length == strlen(value) &&
+           memcmp(token.text, value, token.length) == 0;
+}
+
+static inline int UsageInteger(UsageToken token, int maximum, int *result) {
+    // Only the protocol's unknown sentinel may be negative. No signs,
+    // decimals, suffixes or locale-dependent conversion; decimal zeros are OK.
+    if (UsageTokenEquals(token, "-1")) { *result = -1; return 1; }
+    if (token.length == 0 || token.length > 10) return 0;
+    int value = 0;
+    for (size_t i = 0; i < token.length; ++i) {
+        unsigned char c = (unsigned char)token.text[i];
+        if (c < '0' || c > '9') return 0;
+        int digit = c - '0';
+        if (value > maximum / 10 ||
+            (value == maximum / 10 && digit > maximum % 10)) return 0;
+        value = value * 10 + digit;
+    }
+    *result = value;
+    return 1;
+}
+
+// Parses exactly one record. On success returns 1, stores the provider and
+// reading; on failure returns 0 and leaves both outputs untouched.
+static inline int ParseUsageLine(const char *text, size_t length,
+                          UsageProviderID *provider, UsageReading *out) {
+    if (!text || !provider || !out || length == 0 || length > 512) return 0;
+    UsageToken fields[8];
+    size_t count = 0, i = 0;
+    while (i < length) {
+        while (i < length && (text[i] == ' ' || text[i] == '\t')) ++i;
+        if (i == length) break;
+        if (count == 8) return 0;
+        size_t start = i;
+        while (i < length && text[i] != ' ' && text[i] != '\t') ++i;
+        fields[count++] = (UsageToken){text + start, i - start};
+    }
+    if (count != 7) return 0;
+
+    UsageProviderID id;
+    if (UsageTokenEquals(fields[0], "claude")) id = UsageProviderClaude;
+    else if (UsageTokenEquals(fields[0], "codex")) id = UsageProviderCodex;
+    else return 0;
+
+    UsageReading candidate = {0};
+    if (!UsageInteger(fields[1], 100, &candidate.p5) ||
+        !UsageInteger(fields[2], 100, &candidate.p7) ||
+        !UsageInteger(fields[3], 525600, &candidate.resetMin) ||
+        !UsageInteger(fields[4], 525600, &candidate.reset7dMin) ||
+        !UsageInteger(fields[5], INT_MAX, &candidate.ageSec)) return 0;
+    // The script reports 0 (never -1) for a percentage it does not have; the
+    // -1 sentinel is only meaningful for reset times and age.
+    if (candidate.p5 < 0 || candidate.p7 < 0) return 0;
+    if (!(UsageTokenEquals(fields[6], "ok") || UsageTokenEquals(fields[6], "stale") ||
+          UsageTokenEquals(fields[6], "expired") || UsageTokenEquals(fields[6], "none"))) return 0;
+    memcpy(candidate.state, fields[6].text, fields[6].length);
+    *provider = id;
+    *out = candidate;
+    return 1;
+}
+
+// Scans backwards so the newest record per provider wins and trailing noise
+// is ignored. Returns the number of providers found (0 leaves `out` untouched).
+static inline int ParseUsageOutput(const char *text, size_t length, UsageOutput *out) {
+    if (!text || !out || length == 0 || length > 65536) return 0;
+    // Reject embedded NUL rather than allowing callers to disagree on length.
+    if (memchr(text, '\0', length)) return 0;
+    UsageOutput found;
+    memset(&found, 0, sizeof(found));
+    int count = 0;
+    size_t end = length;
+    while (end > 0 && count < 2) {
+        while (end > 0 && (text[end - 1] == '\n' || text[end - 1] == '\r')) --end;
+        if (end == 0) break;
+        size_t start = end;
+        while (start > 0 && text[start - 1] != '\n' && text[start - 1] != '\r') --start;
+        UsageProviderID provider;
+        UsageReading reading;
+        if (ParseUsageLine(text + start, end - start, &provider, &reading) &&
+            !found.valid[provider]) {
+            found.reading[provider] = reading;
+            found.valid[provider] = 1;
+            ++count;
+        }
+        end = start;
+    }
+    if (count) *out = found;
+    return count;
+}

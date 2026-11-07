@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import "usage_parser.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -14,6 +15,7 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 FOUNDATION_EXPORT UsageProvider * _Nullable ParseUsageRecord(NSString *line);
+FOUNDATION_EXPORT UsageProvider *UsageProviderFromReading(UsageProviderID provider, const UsageReading *reading);
 FOUNDATION_EXPORT NSArray<NSString *> *VisibleUsageProviderNames(UsageProvider *claude,
                                                                   UsageProvider *codex);
 FOUNDATION_EXPORT UsageProvider *DemoUsageProvider(NSString *name);

@@ -1,45 +1,29 @@
 #import "usage_model.h"
+#import <string.h>
 
 @implementation UsageProvider
 @end
 
-static BOOL ParseInt(NSString *value, int *result) {
-    NSScanner *scanner = [NSScanner scannerWithString:value];
-    int parsed = 0;
-    if (![scanner scanInt:&parsed] || !scanner.isAtEnd) return NO;
-    *result = parsed;
-    return YES;
+UsageProvider *UsageProviderFromReading(UsageProviderID provider, const UsageReading *reading) {
+    UsageProvider *usage = [UsageProvider new];
+    usage.name = provider == UsageProviderClaude ? @"claude" : @"codex";
+    usage.p5 = reading->p5;
+    usage.p7 = reading->p7;
+    usage.resetMin = reading->resetMin;
+    usage.reset7dMin = reading->reset7dMin;
+    usage.ageSec = reading->ageSec;
+    usage.state = [NSString stringWithUTF8String:reading->state];
+    usage.available = strcmp(reading->state, "none") != 0 && strcmp(reading->state, "expired") != 0;
+    return usage;
 }
 
 UsageProvider *ParseUsageRecord(NSString *line) {
-    NSArray<NSString *> *parts = [[line
-        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
-        componentsSeparatedByString:@" "];
-    if (parts.count != 7) return nil;
-
-    NSString *name = parts[0];
-    NSString *state = parts[6];
-    if (!([name isEqualToString:@"claude"] || [name isEqualToString:@"codex"])) return nil;
-    if (!([state isEqualToString:@"ok"] || [state isEqualToString:@"stale"] ||
-          [state isEqualToString:@"expired"] || [state isEqualToString:@"none"])) return nil;
-
-    int p5, p7, resetMin, reset7dMin, ageSec;
-    if (!ParseInt(parts[1], &p5) || !ParseInt(parts[2], &p7) ||
-        !ParseInt(parts[3], &resetMin) || !ParseInt(parts[4], &reset7dMin) ||
-        !ParseInt(parts[5], &ageSec)) return nil;
-    if (p5 < 0 || p5 > 100 || p7 < 0 || p7 > 100 || resetMin < -1 ||
-        reset7dMin < -1 || ageSec < -1) return nil;
-
-    UsageProvider *usage = [UsageProvider new];
-    usage.name = name;
-    usage.p5 = p5;
-    usage.p7 = p7;
-    usage.resetMin = resetMin;
-    usage.reset7dMin = reset7dMin;
-    usage.ageSec = ageSec;
-    usage.state = state;
-    usage.available = ![state isEqualToString:@"none"] && ![state isEqualToString:@"expired"];
-    return usage;
+    // One validation path for the app and the tests: the strict C parser.
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+    UsageProviderID provider;
+    UsageReading reading;
+    if (!ParseUsageLine(data.bytes, data.length, &provider, &reading)) return nil;
+    return UsageProviderFromReading(provider, &reading);
 }
 
 NSArray<NSString *> *VisibleUsageProviderNames(UsageProvider *claude, UsageProvider *codex) {

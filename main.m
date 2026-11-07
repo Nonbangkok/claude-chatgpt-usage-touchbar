@@ -20,6 +20,12 @@
 #import "usage_model.h"
 #import "lens_motion.h"
 #import <string.h>
+#import "usage_parser.h"
+
+// Mood pools use indices 0...12. Refuse a stale/partial generated header at
+// build time instead of allowing an out-of-bounds read at runtime.
+_Static_assert(sizeof(kClawdClips) / sizeof(kClawdClips[0]) == 13,
+               "Expected all 13 Clawd clips; regenerate with make assets");
 
 extern void DFRSystemModalShowsCloseBoxWhenFrontMost(BOOL show);
 
@@ -103,9 +109,9 @@ static int ClipForMood(Mood m, int previous) {
     }
     for (int tries = 0; tries < 8; tries++) {
         int pick = pool[arc4random_uniform(n)];
-        if (pick != previous) return pick;
+        if (pick != previous && pick >= 0 && pick < kClawdClipCount) return pick;
     }
-    return pool[0];
+    return pool[0] < kClawdClipCount ? pool[0] : 0;
 }
 
 @interface PetView : NSView
@@ -1173,7 +1179,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
 @property (nonatomic, strong) id activity;
 @property (nonatomic) NSTimeInterval lastFrame;
 @property (nonatomic) NSTimeInterval lastPoll;
-@property (nonatomic) BOOL polling, asleep;
+@property (nonatomic) BOOL polling, asleep, dark;
 @property (nonatomic) double petFrameAccumulator;
 @end
 
@@ -1227,8 +1233,8 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
     [self present];
 
     // App Nap will freeze the animation the moment you switch away, which is
-    // precisely when the pet is worth watching.
-    self.activity = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityUserInitiated
+    // precisely when the pet is worth watching. Do not prevent idle sleep.
+    self.activity = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep
                                                                  reason:@"animate the Touch Bar pet"];
 
     self.lastFrame = NSDate.timeIntervalSinceReferenceDate;
@@ -1248,6 +1254,14 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
         addObserver:self selector:@selector(sleep) name:@"com.apple.screenIsLocked" object:nil];
     [NSDistributedNotificationCenter.defaultCenter
         addObserver:self selector:@selector(wake) name:@"com.apple.screenIsUnlocked" object:nil];
+    // A display may sleep without locking. Keep these states independent so
+    // waking the display does not resume animation while the screen is locked.
+    [NSWorkspace.sharedWorkspace.notificationCenter
+        addObserver:self selector:@selector(screensSlept:)
+               name:NSWorkspaceScreensDidSleepNotification object:nil];
+    [NSWorkspace.sharedWorkspace.notificationCenter
+        addObserver:self selector:@selector(screensWoke:)
+               name:NSWorkspaceScreensDidWakeNotification object:nil];
 
     if (self.demoMode) NSLog(@"Claude Pro + ChatGPT Pro demo mode — no account data queried");
     else [self poll];
@@ -1259,6 +1273,11 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
 
 - (void)sleep { self.asleep = YES; [self.pet.lens cancel]; }
 - (void)wake  { self.asleep = NO; self.lastFrame = NSDate.timeIntervalSinceReferenceDate; [self present]; }
+- (void)screensSlept:(NSNotification *)note { self.dark = YES; [self.pet.lens cancel]; }
+- (void)screensWoke:(NSNotification *)note {
+    self.dark = NO;
+    self.lastFrame = NSDate.timeIntervalSinceReferenceDate;
+}
 
 - (nullable NSTouchBarItem *)touchBar:(NSTouchBar *)bar
                 makeItemForIdentifier:(NSTouchBarItemIdentifier)identifier {
@@ -1278,7 +1297,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
 }
 
 - (void)frame {
-    if (self.asleep) return;
+    if (self.asleep || self.dark) return;
 
     NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
     NSTimeInterval dt = MIN(now - self.lastFrame, 0.25);   // clamp after a stall
@@ -1320,15 +1339,19 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
             out = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
         }
 
-        NSMutableDictionary<NSString *, UsageProvider *> *records = [NSMutableDictionary dictionary];
-        for (NSString *line in [(out ?: @"") componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
-            UsageProvider *record = ParseUsageRecord(line);
-            if (record) records[record.name] = record;
-        }
+        // Parse only complete, validated protocol lines. A provider with no
+        // usable record keeps its last good reading, so shell noise, malformed
+        // numbers or truncated output cannot blank or corrupt the widget. The
+        // same C parser is exercised by tools/test-usage-parser.c.
+        NSData *outputData = [out dataUsingEncoding:NSUTF8StringEncoding];
+        UsageOutput parsed;
+        BOOL valid = ParseUsageOutput(outputData.bytes, outputData.length, &parsed) > 0;
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            UsageProvider *claude = records[@"claude"];
-            UsageProvider *codex = records[@"codex"];
+            UsageProvider *claude = (valid && parsed.valid[UsageProviderClaude])
+                ? UsageProviderFromReading(UsageProviderClaude, &parsed.reading[UsageProviderClaude]) : nil;
+            UsageProvider *codex = (valid && parsed.valid[UsageProviderCodex])
+                ? UsageProviderFromReading(UsageProviderCodex, &parsed.reading[UsageProviderCodex]) : nil;
             if (claude) {
                 self.pet.p5 = claude.p5;
                 self.pet.p7 = claude.p7;
@@ -1346,7 +1369,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
                 self.pet.codexState = codex.state;
                 self.pet.codexHaveData = codex.available;
             }
-            self.pet.haveData = claude != nil || codex != nil;
+            if (claude || codex) self.pet.haveData = YES;   // otherwise keep the last good reading
             self.polling = NO;
         });
     });
@@ -1650,3 +1673,4 @@ int main(int argc, const char **argv) {
     }
     return 0;
 }
+

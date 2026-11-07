@@ -1,7 +1,8 @@
 #!/bin/bash
 # Claude usage for the Touch Bar widget.
 #
-# Prints: "<5h%> <7d%> <5hResetMin> <7dResetMin> <ageSec> <state>"
+# --raw prints one record per provider:
+#   "claude|codex <5h%> <7d%> <5hResetMin> <7dResetMin> <ageSec> <state>"
 #   state: ok      — fresh reading from the API
 #          stale   — API unreachable, showing the last good numbers
 #          expired — the OAuth token has expired; run `claude -p hi` to refresh
@@ -15,7 +16,10 @@
 # or a log — and is unset immediately after.
 set -uo pipefail
 
-CACHE=/tmp/.claude-usage-$UID          # "5h 7d 5hReset 7dReset scopedPct scopedName epoch"
+umask 077
+# Never read the legacy shared /tmp caches. Keep usage data in a private
+# directory directly under the current user's home: `usage` (Claude) and
+# `codex-usage` (Codex).
 TTL=60
 
 # /usr/bin/python3 ships with the Command Line Tools, which this project already
@@ -23,17 +27,96 @@ TTL=60
 # version pointed at a hard-coded nvm path, which worked on exactly one machine.
 PY=/usr/bin/python3
 [ -x "$PY" ] || PY=$(command -v python3) || {
-  echo "0 0 -1 -1 none"; exit 0; }
+  printf 'claude 0 0 -1 -1 -1 none\ncodex 0 0 -1 -1 -1 none\n'; exit 0; }
+
+# Open paths relative to verified directory descriptors. O_NOFOLLOW rejects
+# symlinks; O_NONBLOCK prevents a planted FIFO from hanging the poller. This
+# helper also normalizes *every* number before Bash can use it in arithmetic.
+# Usage: cache_io read|write <usage|codex-usage> [record]
+cache_io() {
+  "$PY" - "$1" "$2" "${3:-}" <<'PY_CACHE'
+import os, re, stat, sys, time, uuid
+
+# name -> (field count, (low, high) per numeric field, index of the model name
+# or None, index of the timestamp). Only these two files can ever be touched.
+SCHEMAS = {
+    "usage": (7, [(-1, 100), (-1, 100), (-1, 525600), (-1, 525600), (-1, 100)], 5, 6),
+    "codex-usage": (5, [(-1, 100), (-1, 100), (-1, 525600), (-1, 525600)], None, 4),
+}
+
+def record(schema, text):
+    count, ranges, name_index, stamp_index = schema
+    fields = text.split()
+    if len(fields) != count:
+        raise ValueError("invalid field count")
+    values = []
+    for value, (low, high) in zip(fields, ranges):
+        if not re.fullmatch(r"-?[0-9]{1,10}", value):
+            raise ValueError("invalid number")
+        value = int(value, 10)
+        if not low <= value <= high:
+            raise ValueError("number out of range")
+        values.append(str(value))
+    if name_index is not None:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", fields[name_index]):
+            raise ValueError("invalid model name")
+        values.append(fields[name_index])
+    if not re.fullmatch(r"[0-9]{1,10}", fields[stamp_index]):
+        raise ValueError("invalid timestamp")
+    stamp = int(fields[stamp_index], 10)
+    if not 0 < stamp <= int(time.time()) + 5:
+        raise ValueError("timestamp out of range")
+    return " ".join(values + [str(stamp)])
+
+try:
+    schema = SCHEMAS[sys.argv[2]]
+    file_name = sys.argv[2]
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    home = os.open(os.path.expanduser("~"), flags)
+    info = os.fstat(home)
+    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise ValueError("unsafe home directory")
+    try:
+        os.mkdir(".claude-usage-touchbar", 0o700, dir_fd=home)
+    except FileExistsError:
+        pass
+    directory = os.open(".claude-usage-touchbar", flags, dir_fd=home)
+    info = os.fstat(directory)
+    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError("unsafe cache directory")
+    if sys.argv[1] == "read":
+        fd = os.open(file_name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                or info.st_size > 1024):
+            raise ValueError("unsafe cache file")
+        with os.fdopen(fd) as stream:
+            result = record(schema, stream.read(1025))
+    else:
+        result = record(schema, sys.argv[3])
+        name = "." + file_name + "-" + uuid.uuid4().hex
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=directory)
+        try:
+            with os.fdopen(fd, "w") as stream:
+                stream.write(result + "\n")
+            os.replace(name, file_name, src_dir_fd=directory, dst_dir_fd=directory)
+        finally:
+            try:
+                os.unlink(name, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+    print(result)
+except (KeyError, OSError, ValueError, UnicodeError):
+    sys.exit(1)
+PY_CACHE
+}
 
 read_cache() {                          # -> P5 P7 RESET RESET7 SP SN STAMP
-  [ -f "$CACHE" ] || return 1
-  read -r P5 P7 RESET RESET7 SP SN STAMP < "$CACHE" 2>/dev/null || :
-  # Version-one caches have no 7d reset. Keep their 5h data and treat the
-  # missing weekly reset as unavailable until the next API refresh.
-  if [ -z "${STAMP:-}" ]; then
-    STAMP=${SN:-0}; SN=${SP:--}; SP=${RESET7:--}; RESET7=-1
-  fi
-  [ -n "${P5:-}" ]
+  local validated
+  validated=$(cache_io read usage) || return 1
+  read -r P5 P7 RESET RESET7 SP SN STAMP <<< "$validated"
 }
 
 P5=; P7=; RESET=-1; RESET7=-1; SP=-1; SN=-; STAMP=0
@@ -93,7 +176,7 @@ for l in j.get("limits") or []:
     elif k == "weekly_scoped":
         sp = round(v)
         nm = ((l.get("scope") or {}).get("model") or {}).get("display_name")
-        if nm: sn = re.sub(r"\s+", "", nm)
+        if isinstance(nm, str): sn = re.sub(r"[^A-Za-z0-9_.-]", "", nm)[:64] or "-"
 
 def reset_min(window):
     t = (window or {}).get("resets_at")
@@ -110,8 +193,12 @@ r7 = reset_min(j.get("seven_day"))
 print(f"{p5} {p7} {r5} {r7} {sp} {sn}")')
       case "$parsed" in
         ''|-1\ -1\ *) state=stale ;;
-        *) printf '%s %s\n' "$parsed" "$(date +%s)" > "$CACHE"; chmod 600 "$CACHE"
-           read_cache || :; AGE=0; state=ok ;;
+        *) if validated=$(cache_io write usage "$parsed $(date +%s)"); then
+             read -r P5 P7 RESET RESET7 SP SN STAMP <<< "$validated"
+             AGE=0; state=ok
+           else
+             state=stale
+           fi ;;
       esac
     else
       state=stale                       # network/5xx — keep the last good numbers
@@ -132,12 +219,11 @@ fi
 # Codex uses the ChatGPT plan token created by the Codex CLI. The usage endpoint
 # is undocumented, so everything below is deliberately defensive: a schema
 # change leaves this provider stale/none rather than inventing a percentage.
-CCACHE=/tmp/.codex-usage-$UID             # "5h 7d 5hReset 7dReset epoch"
+# Cache record (`codex-usage`): "5h 7d 5hReset 7dReset epoch"
 CTTL=60
 CP5=; CP7=; CRESET=-1; CRESET7=-1; CSTAMP=0; CAGE=-1; cstate=ok
-if [ -f "$CCACHE" ]; then
-  read -r CP5 CP7 CRESET CRESET7 CSTAMP < "$CCACHE" 2>/dev/null || :
-  if [ -z "${CSTAMP:-}" ]; then CSTAMP=${CRESET7:-0}; CRESET7=-1; fi
+if cvalidated=$(cache_io read codex-usage); then
+  read -r CP5 CP7 CRESET CRESET7 CSTAMP <<< "$cvalidated"
 fi
 CAGE=$(( $(date +%s) - ${CSTAMP:-0} ))
 
@@ -218,9 +304,12 @@ print(f"{p5} {p7} {reset5} {reset7}")
 ')
       case "$cparsed" in
         ''|-1\ -1\ *) cstate=stale ;;
-        *) printf '%s %s\n' "$cparsed" "$(date +%s)" > "$CCACHE"; chmod 600 "$CCACHE"
-           read -r CP5 CP7 CRESET CRESET7 CSTAMP < "$CCACHE" 2>/dev/null || :
-           CAGE=0; cstate=ok ;;
+        *) if cvalidated=$(cache_io write codex-usage "$cparsed $(date +%s)"); then
+             read -r CP5 CP7 CRESET CRESET7 CSTAMP <<< "$cvalidated"
+             CAGE=0; cstate=ok
+           else
+             cstate=stale
+           fi ;;
       esac
     else
       cstate=stale
@@ -245,3 +334,4 @@ case "${1:-}" in
     printf 'Codex:  5h %s%%  7d %s%% (%s)\n' "$CP5" "$CP7" "$cstate"
     ;;
 esac
+
