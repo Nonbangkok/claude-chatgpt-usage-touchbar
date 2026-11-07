@@ -51,11 +51,11 @@ static double  const kFPS    = 15.0;    // both reference pet apps land at 14-18
 // out side by side so they can be compared at a glance. Earlier versions gave
 // 5h and 7d a row each and demoted the per-model cap to a bare number with no
 // bar, which made the one number you could not compare the odd one out.
-#define READ_W    300.0
+#define READ_W    414.0
 #define READ_X    (kSceneW - READ_W - 8)   // right-aligned: usage is the thing
                                            // you look for, so it sits where the
                                            // eye lands last and stays put
-#define CELL_GAP    9.0
+#define CELL_GAP    6.0
 // 30pt of height only fits two tiers. A third one for the countdown pushed the
 // labels off the top edge, so the countdown rides alongside the first label.
 #define BAR_Y       3.0
@@ -959,7 +959,39 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
                           NSForegroundColorAttributeName: unavailable
                               ? [NSColor colorWithWhite:1.0 alpha:0.40 * dim]
                               : [ink colorWithAlphaComponent:dim] };
-    if (!compact) DrawRight(num, x + w, TEXT_Y - 1, nu);
+    if (!compact) {
+        // Big figure, then a small "left" on the same baseline. Measure rather
+        // than assume: drop the suffix first, then shrink, so the number never
+        // collides with the label whatever the cell width turns out to be.
+        CGFloat budget = w - [resetLabel sizeWithAttributes:lb].width - 6;
+        NSString *figure = unavailable ? @"—" : [NSString stringWithFormat:@"%d%%", remaining];
+        NSColor *figInk = unavailable ? [NSColor colorWithWhite:1.0 alpha:0.40 * dim]
+                                      : [ink colorWithAlphaComponent:dim];
+        NSFont *big = [NSFont monospacedDigitSystemFontOfSize:13 weight:NSFontWeightBold];
+        NSFont *small = [NSFont systemFontOfSize:7.5 weight:NSFontWeightSemibold];
+        NSDictionary *bigAt = @{ NSFontAttributeName: big, NSForegroundColorAttributeName: figInk };
+        NSDictionary *smallAt = @{ NSFontAttributeName: small,
+                                   NSForegroundColorAttributeName: [NSColor colorWithWhite:1.0 alpha:0.5 * dim] };
+        CGFloat bigW = [figure sizeWithAttributes:bigAt].width;
+        if (bigW > budget) {
+            big = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightBold];
+            bigAt = @{ NSFontAttributeName: big, NSForegroundColorAttributeName: figInk };
+            bigW = [figure sizeWithAttributes:bigAt].width;
+        }
+        // Whether "left" fits is decided once for the whole row, from the worst
+        // case (the longest label beside the widest figure), so a bar never has
+        // the suffix on some cells and not others as the numbers change.
+        NSString *suffix = unavailable ? nil : @"left";
+        CGFloat sufW = suffix ? [suffix sizeWithAttributes:smallAt].width + 2 : 0;
+        NSFont *refBig = [NSFont monospacedDigitSystemFontOfSize:13 weight:NSFontWeightBold];
+        CGFloat worst = [@"Claude 5h" sizeWithAttributes:lb].width +
+                        [@"100%" sizeWithAttributes:@{ NSFontAttributeName: refBig }].width + sufW + 6;
+        if (worst > w) sufW = 0;
+        CGFloat baseline = (TEXT_Y - 1) - big.descender;
+        if (sufW > 0)
+            [suffix drawAtPoint:NSMakePoint(x + w - sufW + 2, baseline + small.descender) withAttributes:smallAt];
+        [figure drawAtPoint:NSMakePoint(x + w - sufW - bigW, baseline + big.descender) withAttributes:bigAt];
+    }
 
     // The selected cell briefly grows upward and gains a soft halo. It is
     // feedback for a fingertip, not a persistent fifth visual state.
