@@ -946,14 +946,19 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
 
     BOOL compact = w < 82;
     CGFloat labelSize = effect > 0 ? 8.0 : (compact ? 7.0 : 10.0);
+    // A window with no reading is deliberately quieter than a live gauge: it
+    // should read as "nothing to report here", not as a loading bar that broke.
+    CGFloat quiet = unavailable ? 0.55 : 1.0;
     NSDictionary *lb = @{ NSFontAttributeName: [NSFont systemFontOfSize:labelSize weight:NSFontWeightSemibold],
-                          NSForegroundColorAttributeName: [NSColor colorWithWhite:1.0 alpha:(0.70 + effect * 0.30) * dim] };
+                          NSForegroundColorAttributeName: [NSColor colorWithWhite:1.0 alpha:(0.70 + effect * 0.30) * dim * quiet] };
     [resetLabel drawAtPoint:NSMakePoint(x, TEXT_Y) withAttributes:lb];
 
     NSString *num = unavailable ? @"—" : UsageRemainingDisplay(pct);
     NSDictionary *nu = @{ NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:(compact ? 8 : 12)
                                                                                 weight:NSFontWeightBold],
-                          NSForegroundColorAttributeName: [ink colorWithAlphaComponent:dim] };
+                          NSForegroundColorAttributeName: unavailable
+                              ? [NSColor colorWithWhite:1.0 alpha:0.40 * dim]
+                              : [ink colorWithAlphaComponent:dim] };
     if (!compact) DrawRight(num, x + w, TEXT_Y - 1, nu);
 
     // The selected cell briefly grows upward and gains a soft halo. It is
@@ -965,9 +970,29 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
         NSRectFill(NSInsetRect(NSMakeRect(x, barY, w, barH), -2.0, -1.2));
     }
     // The track is the 100% reference, not decoration — keep it readable.
-    [[NSColor colorWithWhite:0.20 alpha:dim] set];
     NSBezierPath *track = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(x, barY, w, barH) xRadius:3 yRadius:3];
-    [track fill];
+    if (unavailable) {
+        // Hollow track with fine diagonal hatching: empty by design.
+        [[NSColor colorWithWhite:0.11 alpha:dim] set];
+        [track fill];
+        [NSGraphicsContext saveGraphicsState];
+        [track addClip];
+        [[NSColor colorWithWhite:1.0 alpha:0.10 * dim] set];
+        NSBezierPath *hatch = [NSBezierPath bezierPath];
+        hatch.lineWidth = 0.8;
+        for (CGFloat hx = x - barH; hx < x + w; hx += 4.0) {
+            [hatch moveToPoint:NSMakePoint(hx, barY)];
+            [hatch lineToPoint:NSMakePoint(hx + barH, barY + barH)];
+        }
+        [hatch stroke];
+        [NSGraphicsContext restoreGraphicsState];
+        [[NSColor colorWithWhite:1.0 alpha:0.14 * dim] set];
+        track.lineWidth = 0.6;
+        [track stroke];
+    } else {
+        [[NSColor colorWithWhite:0.20 alpha:dim] set];
+        [track fill];
+    }
 
     CGFloat fillW = unavailable ? 0 : w * remaining / 100.0;
     if (fillW > 0) {
@@ -985,7 +1010,7 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
 
     // Ticks at 50 and 90 turn the remaining-allowance bar into a scale.
     [[NSColor colorWithWhite:1.0 alpha:0.3 * dim] set];
-    for (NSNumber *frac in @[@0.5, @0.9]) {
+    for (NSNumber *frac in unavailable ? @[] : @[@0.5, @0.9]) {
         CGFloat tx = w * frac.doubleValue;
         if (tx > fillW) NSRectFill(NSMakeRect(x + tx, barY, 1, barH));
     }
@@ -993,7 +1018,12 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     // Four limits leave a narrow cell. Keep the full provider/window label on
     // its own line and print the longer "38% left" inside the bar, rather than
     // squeezing the two strings until they overlap.
-    if (compact) {
+    if (compact && unavailable) {
+        NSDictionary *muted = @{ NSFontAttributeName: nu[NSFontAttributeName],
+                                 NSForegroundColorAttributeName: [NSColor colorWithWhite:1.0 alpha:0.45 * dim] };
+        CGFloat dw = [num sizeWithAttributes:muted].width;
+        [num drawAtPoint:NSMakePoint(x + (w - dw) / 2, barY - 0.5) withAttributes:muted];
+    } else if (compact) {
         NSShadow *shadow = [NSShadow new];
         shadow.shadowColor = [NSColor colorWithWhite:0 alpha:0.9];
         shadow.shadowOffset = NSMakeSize(0, -1);
@@ -1398,6 +1428,7 @@ static int RenderStates(NSString *dir) {
         @"09-claude-codex": @[@26, @91, @125, @"ok", @0, @"", @18, @42, @44, @"ok"],
         @"10-codex-stale": @[@26, @91, @125, @"ok", @0, @"", @18, @42, @44, @"stale"],
         @"11-codex-expired": @[@26, @91, @125, @"ok", @0, @"", @0, @0, @-1, @"expired"],
+        @"13-null-5h": @[@-1, @41, @-1, @"ok", @0, @"", @-1, @0, @-1, @"ok"],
         @"12-claude-none": @[@0, @0, @-1, @"none", @0, @"", @18, @42, @44, @"ok"],
     };
     [NSFileManager.defaultManager createDirectoryAtPath:dir
