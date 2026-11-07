@@ -20,6 +20,7 @@
 #import "usage_model.h"
 #import "lens_motion.h"
 #import "effects.h"
+#import "usage_pace.h"
 #import <string.h>
 #import "usage_parser.h"
 
@@ -59,6 +60,13 @@ static double  const kFPS    = 15.0;    // both reference pet apps land at 14-18
 #define CELL_GAP    6.0
 // 30pt of height only fits two tiers. A third one for the countdown pushed the
 // labels off the top edge, so the countdown rides alongside the first label.
+// The detail panel that opens when a bar is touched. One row of text above a
+// timeline of the whole window; the ring gauge sits at the left.
+#define PANEL_RING_X   (READ_X + 15.0)
+#define PANEL_TEXT_X   (READ_X + 34.0)
+#define PANEL_TRACK_X0 (READ_X + 34.0)
+#define PANEL_TRACK_X1 (READ_X + 262.0)
+#define PANEL_RIGHT    (READ_X + READ_W - 6.0)
 #define BAR_Y       3.0
 #define BAR_H       8.0
 #define TEXT_Y     14.0
@@ -167,14 +175,12 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
 @property (nonatomic) BOOL fxCountUp;                  // new readings count up from 0
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *shownRemaining, *fxTargets, *fxPrevTargets;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSValue *> *cellFrames;
-@property (nonatomic) CGFloat pressX, pressT;          // ripple where a bar was touched
 @property (nonatomic) double fxClock, glossAt, collisionCooldown;
 @property (nonatomic) CGFloat claudeSpin, gptSpin;     // 0..1 coin-flip progress on a combo
 @property (nonatomic) CGFloat claudeBadgeT, gptBadgeT; // "×3" combo badge
 @property (nonatomic) int claudeBadgeN, gptBadgeN;
 - (void)advanceFX:(double)dt;
 - (void)tapMascot:(MascotTarget)target;
-- (void)pressBarAt:(CGFloat)tx;
 @end
 
 @implementation PetView {
@@ -238,7 +244,8 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
     self.lensLayout = [names componentsJoinedByString:@"|"];
     int reset = [self.lensCell[3] intValue];
     self.lensResetDate = reset < 0 ? nil : [NSDate dateWithTimeIntervalSinceNow:reset * 60.0];
-    [self.lens beginAt:tx minimum:start maximum:start + w];
+    // Scrubbing moves a forecast cursor along the panel's timeline.
+    [self.lens beginAt:tx minimum:PANEL_TRACK_X0 maximum:PANEL_TRACK_X1];
     self.activeUsageCell = -1; self.usageTapT = 0;
     self.needsDisplay = YES;
     return YES;
@@ -272,7 +279,10 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
     if (tx >= READ_X) {
         if ([self beginLensAt:tx]) {
             self.lensTouchIdentity = t.identity;
-            [self pressBarAt:tx];
+            // The mascots glance at whatever you are reading. Nothing louder:
+            // the panel itself is the response.
+            if (!self.dragging) { if (self.act == ActWalk) self.dir = 1; self.gptDir = 1; }
+            self.resetLookTime = MAX(self.resetLookTime, 0.9);
         }
         return;
     }
@@ -570,29 +580,6 @@ static void AccentRGB(MascotTarget who, float *r, float *g, float *b) {
     self.needsDisplay = YES;
 }
 
-// Touching a bar ripples from the fingertip, throws sparks off the fill and
-// makes both mascots turn and hop toward the readout.
-- (void)pressBarAt:(CGFloat)tx {
-    self.pressX = tx; self.pressT = 0.55;
-    NSArray *cells = [self usageCells];
-    CGFloat w = (READ_W - CELL_GAP * (cells.count - 1)) / MAX(1, cells.count);
-    NSInteger i = (NSInteger)floor((tx - READ_X) / (w + CELL_GAP));
-    float r = 1, g = 1, b = 1;
-    if (i >= 0 && i < (NSInteger)cells.count) {
-        AccentRGB([cells[i][4] isEqualToString:@"codex"] ? MascotTargetGPT : MascotTargetClaude, &r, &g, &b);
-    }
-    FXBurst(_fx, tx, BAR_Y + BAR_H, 14, 25, 70, M_PI * 0.1, M_PI * 0.9, 0.55, 2.0, 90, r, g, b, FXKindSpark);
-    FXBurst(_fx, tx, BAR_Y + BAR_H / 2, 8, 15, 45, 0, M_PI * 2, 0.6, 1.5, 40, 1, 1, 1, FXKindPixel);
-    if (!self.dragging) {
-        if (self.act == ActWalk) self.dir = 1;
-        self.gptDir = 1;
-        self.resetLookTime = MAX(self.resetLookTime, 0.9);
-        if (!FXHopIsActive(&_claudeHop)) FXHopKick(&_claudeHop, 38);
-        if (!FXHopIsActive(&_gptHop)) FXHopKick(&_gptHop, 38);
-    }
-    self.needsDisplay = YES;
-}
-
 // 60fps: particles, hops, tweens and the occasional gloss sweep. Requests a
 // redraw only while something is actually moving, so an idle bar stays cheap.
 - (void)advanceFX:(double)dt {
@@ -610,9 +597,8 @@ static void AccentRGB(MascotTarget who, float *r, float *g, float *b) {
     self.gptSpin = MAX(0, self.gptSpin - dt / 0.5);
     self.claudeBadgeT = MAX(0, self.claudeBadgeT - dt);
     self.gptBadgeT = MAX(0, self.gptBadgeT - dt);
-    self.pressT = MAX(0, self.pressT - dt);
     active |= self.claudeSpin > 0 || self.gptSpin > 0 || self.claudeBadgeT > 0 ||
-              self.gptBadgeT > 0 || self.pressT > 0;
+              self.gptBadgeT > 0;
 
     // Readings glide to their value (and count up on first sight). A change
     // between polls throws sparks off the end of that bar.
@@ -1035,16 +1021,17 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
             };
             BOOL has5 = !ready || p5 >= 0;
             BOOL has7 = !ready || p7 >= 0;
+            // cell: label, used%, state, resetMin, provider, label-with-plan, windowMin
             if (has5)
                 [cells addObject:@[usageLabel(name, @"5h", providerState),
-                                   @(ready ? p5 : -1), providerState, @(reset5), provider, planned(@"5h")]];
+                                   @(ready ? p5 : -1), providerState, @(reset5), provider, planned(@"5h"), @300]];
             if (has7)
                 [cells addObject:@[usageLabel(name, UsagePeriodLabel(longDays), providerState),
                                    @(ready ? p7 : -1), providerState, @(reset7), provider,
-                                   planned(UsagePeriodLabel(longDays))]];
+                                   planned(UsagePeriodLabel(longDays)), @(MAX(1, longDays) * 1440)]];
             if (!has5 && !has7)   // live but reporting nothing: one honest placeholder
                 [cells addObject:@[[name stringByAppendingString:@" —"], @-1, providerState, @-1, provider,
-                                   [name stringByAppendingString:@" —"]]];
+                                   [name stringByAppendingString:@" —"], @0]];
         };
     if ([visible containsObject:@"claude"])
         addProvider(claudeName, @"claude", claudeReady, self.state,
@@ -1119,142 +1106,214 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     if (self.lens.visible && self.lensCell) [self drawUsageLens];
 }
 
-// The focus surface lives inside the actual 30pt Touch Bar. Text changes sides
-// to give the moving glass lens room; none of it is drawn above the hardware.
+// The detail panel. Touching a bar replaces the readout with the one thing
+// the bar cannot say: not just how much is left, but whether it will last.
+//   ring   — remaining %, sweeping in as the panel opens
+//   title  — "Claude Ultra · 7d  52% left"      right: "resets in 2d 3h · Sun 12:00"
+//   track  — the whole window as a timeline: elapsed, now, and at the observed
+//            pace either the reset (with how much to spare) or the point where
+//            the allowance runs out
+//   scrub  — drag along the track to read the forecast at any moment
+static NSColor *PaceColor(UsagePaceVerdict verdict, NSColor *tint) {
+    if (verdict == UsagePaceVerdictExhausts) return [NSColor colorWithSRGBRed:1 green:0.40 blue:0.38 alpha:1];
+    if (verdict == UsagePaceVerdictLasts)    return [NSColor colorWithSRGBRed:0.45 green:0.86 blue:0.58 alpha:1];
+    return [tint colorWithAlphaComponent:0.7];
+}
+
+static NSString *ClockLabel(NSDate *date, BOOL withDay) {
+    static NSDateFormatter *time, *dayTime;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        time = [NSDateFormatter new]; time.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+        time.dateFormat = @"HH:mm";
+        dayTime = [NSDateFormatter new]; dayTime.locale = time.locale;
+        dayTime.dateFormat = @"EEE HH:mm";
+    });
+    return [(withDay ? dayTime : time) stringFromDate:date];
+}
+
 - (void)drawUsageLens {
     UsageLens *l = self.lens;
     CGFloat a = MIN(1, l.amount);
     if (a < 0.003) return;
+    CGFloat ease = 1 - pow(1 - a, 3);                      // open fast, settle softly
     int pct = [self.lensCell[1] intValue];
     int remaining = UsageRemainingPercent(pct);
+    int windowMin = [self.lensCell[6] intValue];
+    int resetMin = self.lensResetDate ? MAX(0, (int)ceil([self.lensResetDate timeIntervalSinceNow] / 60)) : -1;
+    UsagePace pace = UsagePaceCompute(pct, resetMin, windowMin);
+    UsagePaceVerdict verdict = UsagePaceVerdictFor(pace);
     NSColor *tint = remaining <= 10
         ? [NSColor colorWithSRGBRed:1 green:0.32 blue:0.34 alpha:1]
         : remaining <= 50 ? [NSColor colorWithSRGBRed:1 green:0.76 blue:0.34 alpha:1]
         : ProviderAccent(self.lensCell[4], YES);
-    CGFloat cx = MAX(READ_X + 17, MIN(l.x, READ_X + READ_W - 17));
-    CGFloat cy = 15;
-    CGFloat r = 10.6 * MAX(0.15, l.amount);
-    CGFloat stretch = MIN(3.2, fabs(l.velocity) * 0.012);
-    NSRect glass = NSMakeRect(cx - r - stretch, cy - r, 2 * (r + stretch), 2 * r);
+    NSColor *paceInk = PaceColor(verdict, tint);
+
     [NSGraphicsContext saveGraphicsState];
-    NSRectClip(NSMakeRect(READ_X - 2, 0, READ_W + 4, 30));
+    NSRectClip(NSMakeRect(READ_X - 2, 0, READ_W + 4, kSceneH));
+    // Backdrop: the readout goes dark, with a breath of the provider's colour
+    // rising from the bottom edge so the panel feels lit rather than cut out.
     [[NSColor colorWithWhite:0 alpha:a * 0.985] set];
-    NSRectFill(NSMakeRect(READ_X - 2, 0, READ_W + 4, 30));
-    [[tint colorWithAlphaComponent:a * 0.12] set];
-    NSRectFill(NSMakeRect(READ_X + 7, 0.5, READ_W - 14, 1));
-    [[tint colorWithAlphaComponent:a * 0.5] set];
-    NSRectFill(NSMakeRect(READ_X + 7, 0.5, (READ_W - 14) * remaining / 100.0, 1));
+    NSRectFill(NSMakeRect(READ_X - 2, 0, READ_W + 4, kSceneH));
+    NSGradient *wash = [[NSGradient alloc] initWithStartingColor:[tint colorWithAlphaComponent:a * 0.10]
+                                                    endingColor:[tint colorWithAlphaComponent:0]];
+    [wash drawInRect:NSMakeRect(READ_X - 2, 0, READ_W + 4, 14) angle:90];
 
-    // Colored bloom is deliberately behind glass and text.
-    for (int i = 5; i >= 1; i--) {
-        [[tint colorWithAlphaComponent:a * 0.016] set];
-        [[NSBezierPath bezierPathWithOvalInRect:NSInsetRect(glass, -i * 1.6, -i * 1.6)] fill];
+    // --- ring gauge ---------------------------------------------------------
+    CGFloat cx = PANEL_RING_X, cy = 15, r = 10.2;
+    for (int i = 4; i >= 1; i--) {                             // bloom behind the glass
+        [[tint colorWithAlphaComponent:a * 0.03] set];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(cx - r - i * 1.5, cy - r - i * 1.5,
+                                                            2 * (r + i * 1.5), 2 * (r + i * 1.5))] fill];
     }
-    if (l.scrubbing) {
-        for (int i = 5; i >= 1; i--) {
-            CGFloat tx = cx - l.velocity * 0.012 * i;
-            [[tint colorWithAlphaComponent:a * (0.075 - i * 0.010)] set];
-            [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(tx - 3, cy - 3, 6, 6)] fill];
-        }
+    NSBezierPath *ringTrack = [NSBezierPath bezierPath];
+    [ringTrack appendBezierPathWithArcWithCenter:NSMakePoint(cx, cy) radius:r startAngle:0 endAngle:360];
+    ringTrack.lineWidth = 2.4;
+    [[NSColor colorWithWhite:1 alpha:a * 0.13] set]; [ringTrack stroke];
+    CGFloat sweep = 360.0 * MAX(0, remaining) / 100.0 * ease;
+    if (sweep > 0.5) {
+        NSBezierPath *arc = [NSBezierPath bezierPath];
+        [arc appendBezierPathWithArcWithCenter:NSMakePoint(cx, cy) radius:r
+                                    startAngle:90 endAngle:90 - sweep clockwise:YES];
+        arc.lineWidth = 2.4; arc.lineCapStyle = NSLineCapStyleRound;
+        [[tint colorWithAlphaComponent:a * 0.35] set]; arc.lineWidth = 4.2; [arc stroke];   // glow
+        [[tint colorWithAlphaComponent:a] set]; arc.lineWidth = 2.4; [arc stroke];
+        // A bright bead at the arc's leading end.
+        CGFloat ang = (90 - sweep) * M_PI / 180;
+        [[NSColor colorWithWhite:1 alpha:a * 0.9] set];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(cx + cos(ang) * r - 1.3, cy + sin(ang) * r - 1.3, 2.6, 2.6)] fill];
     }
-    if (l.rippleTime < 0.65) {
-        for (int i = 0; i < 2; i++) {
-            CGFloat p = MAX(0, l.rippleTime - i * 0.1) / 0.65;
-            CGFloat rr = r + 12 * p;
-            [[tint colorWithAlphaComponent:a * 0.30 * (1 - p)] set];
-            NSBezierPath *ripple = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(cx - rr, cy - rr * 0.55, rr * 2, rr * 1.1)];
-            ripple.lineWidth = 0.6; [ripple stroke];
-        }
+    if (remaining <= 10) {                                   // critical: the ring breathes
+        CGFloat beat = pow(MAX(0, sin(l.clock * M_PI * 2 / 2.2)), 4);
+        [[tint colorWithAlphaComponent:beat * a * 0.22] set];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(cx - r + 1, cy - r + 1, 2 * r - 2, 2 * r - 2)] fill];
     }
-
-    NSBezierPath *shell = [NSBezierPath bezierPathWithOvalInRect:glass];
-    [NSGraphicsContext saveGraphicsState]; [shell addClip];
-    NSGradient *surface = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithWhite:0.22 alpha:a]
-                                                      endingColor:[NSColor colorWithWhite:0.025 alpha:a]];
-    [surface drawInRect:glass angle:270];
-    [[tint colorWithAlphaComponent:0.42 * a] set];
-    NSRectFill(NSMakeRect(glass.origin.x, glass.origin.y, glass.size.width,
-                          glass.size.height * remaining / 100.0));
-    NSBezierPath *reflection = [NSBezierPath bezierPath];
-    [reflection moveToPoint:NSMakePoint(cx - r + 3, cy + 4)];
-    [reflection curveToPoint:NSMakePoint(cx + r - 3, cy + 6)
-              controlPoint1:NSMakePoint(cx - 3, cy + r - 2)
-              controlPoint2:NSMakePoint(cx + 3, cy + r - 2)];
-    [[NSColor colorWithWhite:1 alpha:a * 0.4] set];
-    reflection.lineWidth = 0.8; [reflection stroke];
-    [NSGraphicsContext restoreGraphicsState];
-    [[tint colorWithAlphaComponent:a * 0.9] set]; shell.lineWidth = 0.75; [shell stroke];
-
-    if (l.holding) {
-        for (int i = 0; i < 3; i++) {
-            CGFloat angle = l.clock * (i == 1 ? -82 : 58 + i * 30) + i * 120;
-            NSBezierPath *arc = [NSBezierPath bezierPath];
-            [arc appendBezierPathWithArcWithCenter:NSMakePoint(cx, cy) radius:11.3 + i * 0.9
-                                       startAngle:angle endAngle:angle + 75];
-            [[tint colorWithAlphaComponent:a * (0.7 - i * 0.15)] set];
-            arc.lineWidth = 0.65; [arc stroke];
-        }
-    }
-    if (remaining <= 10) {
-        CGFloat beat = pow(MAX(0, sin(l.clock * M_PI * 2 / 2.5)), 6);
-        [[tint colorWithAlphaComponent:beat * a * 0.16] set]; [shell fill];
-    }
-    if (!l.touching && l.releaseTime >= 0 && l.releaseTime < 0.65) {
-        CGFloat p = l.releaseTime / 0.65;
-        for (int i = 0; i < 6; i++) {
-            CGFloat angle = i * M_PI / 3;
-            CGFloat dist = (1 - p) * 16;
-            [[tint colorWithAlphaComponent:a * (1 - p) * 0.65] set];
-            [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(cx + cos(angle) * dist - 0.7,
-                                                              cy + sin(angle) * dist * 0.55 - 0.7, 1.4, 1.4)] fill];
-        }
-    }
-    NSString *core = [NSString stringWithFormat:@"%d", remaining];
-    NSDictionary *coreStyle = @{NSFontAttributeName:[NSFont monospacedDigitSystemFontOfSize:9 weight:NSFontWeightBold],
-                                 NSForegroundColorAttributeName:[NSColor colorWithWhite:1 alpha:a]};
+    NSString *core = remaining < 0 ? @"—" : [NSString stringWithFormat:@"%d", (int)lround(remaining * ease)];
+    NSDictionary *coreStyle = @{ NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:(core.length > 2 ? 7.5 : 9) weight:NSFontWeightBold],
+                                 NSForegroundColorAttributeName: [NSColor colorWithWhite:1 alpha:a] };
     [core drawAtPoint:NSMakePoint(cx - [core sizeWithAttributes:coreStyle].width / 2, cy - 5.5) withAttributes:coreStyle];
 
-    BOOL textRight = cx < READ_X + READ_W / 2;
-    CGFloat textX = textRight ? cx + r + stretch + 12 : READ_X + 9;
-    CGFloat textW = textRight ? READ_X + READ_W - 6 - textX : cx - r - stretch - 12 - textX;
-    NSString *title = [NSString stringWithFormat:@"%@ · %d%% left", self.lensCell[5], remaining];
-    int reset = self.lensResetDate ? MAX(0, (int)ceil([self.lensResetDate timeIntervalSinceNow] / 60)) : -1;
-    NSString *detail = self.lensResetDate ? [@"resets in " stringByAppendingString:[UsageResetDisplay(reset) substringFromIndex:2]] : @"reset time unavailable";
-    if (l.holding && self.lensResetDate) {
-        NSDateFormatter *formatter = [NSDateFormatter new];
-        formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
-        formatter.dateFormat = reset >= 24 * 60 ? @"d MMM HH:mm" : @"HH:mm";
-        detail = [@"reset at " stringByAppendingString:[formatter stringFromDate:self.lensResetDate]];
-    }
-    if (l.scrubbing && l.checkpoint >= 0) {
-        title = [title stringByAppendingFormat:@"   | %ld%% mark", (long)l.checkpoint];
-    }
-    [NSGraphicsContext saveGraphicsState];
-    NSRectClip(NSMakeRect(textX, 0, MAX(0, textW), 30));
-    for (int row = 0; row < 2; row++) {
-        NSString *s = row == 0 ? title : detail;
-        CGFloat fontSize = row == 0 ? 10.0 : 9.0;
-        NSMutableDictionary *style = [@{NSFontAttributeName:[NSFont systemFontOfSize:fontSize weight:row == 0 ? NSFontWeightSemibold : NSFontWeightMedium],
-                                       NSForegroundColorAttributeName:row == 0 ? [NSColor colorWithWhite:1 alpha:a] : [tint colorWithAlphaComponent:a * 0.86]} mutableCopy];
-        while ([s sizeWithAttributes:style].width > textW && fontSize > 7.5) {
-            fontSize -= 0.25;
-            style[NSFontAttributeName] = [NSFont systemFontOfSize:fontSize weight:NSFontWeightMedium];
+    // --- title row --------------------------------------------------------------
+    CGFloat slide = (1 - ease) * 6;
+    NSDictionary *titleStyle = @{ NSFontAttributeName: [NSFont systemFontOfSize:10 weight:NSFontWeightSemibold],
+                                  NSForegroundColorAttributeName: [NSColor colorWithWhite:1 alpha:a] };
+    NSDictionary *leftStyle  = @{ NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:10 weight:NSFontWeightBold],
+                                  NSForegroundColorAttributeName: [tint colorWithAlphaComponent:a] };
+    NSDictionary *dimStyle   = @{ NSFontAttributeName: [NSFont systemFontOfSize:9 weight:NSFontWeightMedium],
+                                  NSForegroundColorAttributeName: [NSColor colorWithWhite:1 alpha:a * 0.55] };
+    NSDictionary *strongStyle = @{ NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:10 weight:NSFontWeightBold],
+                                   NSForegroundColorAttributeName: [NSColor colorWithWhite:1 alpha:a] };
+    NSString *title = self.lensCell[5];
+    [title drawAtPoint:NSMakePoint(PANEL_TEXT_X + slide, 16) withAttributes:titleStyle];
+    CGFloat tw = [title sizeWithAttributes:titleStyle].width;
+    if (remaining >= 0)
+        [[NSString stringWithFormat:@"%d%% left", remaining]
+            drawAtPoint:NSMakePoint(PANEL_TEXT_X + slide + tw + 8, 16) withAttributes:leftStyle];
+
+    // Right: when it resets, as a countdown and as a clock.
+    NSString *resetDur = resetMin < 0 ? @"—" : UsageDurationDisplay(resetMin);
+    NSString *clock = self.lensResetDate ? ClockLabel(self.lensResetDate, resetMin >= 20 * 60) : @"";
+    NSAttributedString *right = [[NSAttributedString alloc] initWithString:@""];
+    NSMutableAttributedString *rs = [NSMutableAttributedString new];
+    [rs appendAttributedString:[[NSAttributedString alloc] initWithString:@"resets in " attributes:dimStyle]];
+    [rs appendAttributedString:[[NSAttributedString alloc] initWithString:resetDur attributes:strongStyle]];
+    if (clock.length)
+        [rs appendAttributedString:[[NSAttributedString alloc] initWithString:[@"  " stringByAppendingString:clock] attributes:dimStyle]];
+    right = rs;
+    [right drawAtPoint:NSMakePoint(PANEL_RIGHT - right.size.width - slide, 16)];
+
+    // --- timeline ---------------------------------------------------------------
+    CGFloat tx0 = PANEL_TRACK_X0, tx1 = PANEL_TRACK_X1, tw0 = tx1 - tx0, ty = 4.0, th = 5.0;
+    NSBezierPath *track = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(tx0, ty, tw0, th) xRadius:2.5 yRadius:2.5];
+    [[NSColor colorWithWhite:1 alpha:a * 0.10] set]; [track fill];
+    CGFloat nowX = tx0, exhaustX = -1;
+    if (pace.valid) {
+        nowX = tx0 + tw0 * (pace.elapsedMin / pace.windowMin) * ease;
+        [NSGraphicsContext saveGraphicsState];
+        [track addClip];
+        // What has already passed.
+        [[NSColor colorWithWhite:1 alpha:a * 0.22] set];
+        NSRectFill(NSMakeRect(tx0, ty, nowX - tx0, th));
+        // What is still to come, coloured by the verdict.
+        if (verdict == UsagePaceVerdictExhausts) {
+            exhaustX = nowX + tw0 * (pace.exhaustInMin / pace.windowMin);
+            [[paceInk colorWithAlphaComponent:a * 0.55] set];
+            NSRectFill(NSMakeRect(nowX, ty, exhaustX - nowX, th));
+            // The dead zone: nothing left between running out and the reset.
+            [[paceInk colorWithAlphaComponent:a * 0.14] set];
+            NSRectFill(NSMakeRect(exhaustX, ty, tx1 - exhaustX, th));
+            NSBezierPath *hatch = [NSBezierPath bezierPath];
+            hatch.lineWidth = 0.7;
+            for (CGFloat hx = exhaustX; hx < tx1 + th; hx += 3.5) {
+                [hatch moveToPoint:NSMakePoint(hx, ty)]; [hatch lineToPoint:NSMakePoint(hx - th, ty + th)];
+            }
+            [[paceInk colorWithAlphaComponent:a * 0.35] set]; [hatch stroke];
+        } else {
+            NSGradient *future = [[NSGradient alloc] initWithStartingColor:[paceInk colorWithAlphaComponent:a * 0.55]
+                                                              endingColor:[paceInk colorWithAlphaComponent:a * 0.18]];
+            [future drawInRect:NSMakeRect(nowX, ty, tx1 - nowX, th) angle:0];
         }
-        [s drawAtPoint:NSMakePoint(textX, row == 0 ? 15 : 3.5) withAttributes:style];
+        [NSGraphicsContext restoreGraphicsState];
+        // Quarter ticks turn the track into a scale.
+        [[NSColor colorWithWhite:1 alpha:a * 0.25] set];
+        for (int q = 1; q < 4; q++) NSRectFill(NSMakeRect(tx0 + tw0 * q / 4.0, ty, 0.8, th));
+        // "Now": a bright marker with a soft pulse.
+        CGFloat pulse = 0.6 + 0.4 * sin(l.clock * 4.0);
+        [[tint colorWithAlphaComponent:a * 0.35 * pulse] set];
+        NSRectFill(NSMakeRect(nowX - 2.5, ty - 1.5, 5, th + 3));
+        [[NSColor colorWithWhite:1 alpha:a] set];
+        NSRectFill(NSMakeRect(nowX - 0.8, ty - 1.5, 1.6, th + 3));
+        if (exhaustX >= 0) {                                   // where it runs out
+            [[paceInk colorWithAlphaComponent:a] set];
+            NSRectFill(NSMakeRect(exhaustX - 0.7, ty - 1.5, 1.4, th + 3));
+        }
     }
-    [NSGraphicsContext restoreGraphicsState];
-    if (l.scrubbing) {
-        CGFloat mark = l.minimumX + (l.maximumX - l.minimumX) * l.checkpoint / 100.0;
-        [[tint colorWithAlphaComponent:a * (0.4 + 0.6 * l.checkpointPulse)] set];
-        NSRectFill(NSMakeRect(mark - 0.5, 0, 1, 2 + l.checkpointPulse * 2));
+
+    // --- pace copy (bottom right), and the forecast while scrubbing -------------
+    NSString *copy; NSColor *copyInk = paceInk;
+    BOOL scrub = l.scrubbing && pace.valid;
+    if (scrub) {
+        CGFloat fx = MAX(tx0, MIN(tx1, l.x));
+        double posMin = (fx - tx0) / tw0 * pace.windowMin;
+        double ahead = MAX(0, posMin - pace.elapsedMin);
+        double projected = UsagePaceProject(pace, ahead);
+        NSDate *at = [NSDate dateWithTimeIntervalSinceNow:ahead * 60];
+        if (ahead < 1)
+            copy = [NSString stringWithFormat:@"now · %d%% left", remaining];
+        else if (projected <= 0)
+            copy = [NSString stringWithFormat:@"in %@ · %@ → runs out", UsageDurationDisplay((int)ahead), ClockLabel(at, ahead >= 20 * 60)];
+        else
+            copy = [NSString stringWithFormat:@"in %@ · %@ → ~%d%% left", UsageDurationDisplay((int)ahead), ClockLabel(at, ahead >= 20 * 60), (int)lround(projected)];
+        copyInk = projected <= 0 ? PaceColor(UsagePaceVerdictExhausts, tint) : [NSColor colorWithWhite:1 alpha:0.9];
+        // Forecast cursor: a line through the track with a bead on top.
+        [[NSColor colorWithWhite:1 alpha:a * 0.9] set];
+        NSRectFill(NSMakeRect(fx - 0.5, 1.5, 1, th + 5));
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(fx - 1.8, ty + th + 1.2, 3.6, 3.6)] fill];
+        if (ahead >= 1) {
+            [[copyInk colorWithAlphaComponent:a * 0.25] set];
+            NSRectFill(NSMakeRect(MIN(nowX, fx), ty, fabs(fx - nowX), th));
+        }
+    } else if (verdict == UsagePaceVerdictExhausts) {
+        copy = [NSString stringWithFormat:@"at this pace: runs out in %@", UsageDurationDisplay((int)pace.exhaustInMin)];
+    } else if (verdict == UsagePaceVerdictLasts) {
+        copy = pace.ratePerMin > 0
+            ? [NSString stringWithFormat:@"on pace · ~%d%% to spare at reset", (int)lround(pace.spareAtResetPct)]
+            : @"untouched this window";
+    } else {
+        copy = @"no reset time · pace unknown";
     }
+    NSMutableDictionary *copyStyle = [@{ NSFontAttributeName: [NSFont systemFontOfSize:8.5 weight:NSFontWeightSemibold],
+                                         NSForegroundColorAttributeName: [copyInk colorWithAlphaComponent:a] } mutableCopy];
+    CGFloat maxW = PANEL_RIGHT - tx1 - 10, size = 8.5;
+    while ([copy sizeWithAttributes:copyStyle].width > maxW && size > 7) {
+        size -= 0.25;
+        copyStyle[NSFontAttributeName] = [NSFont systemFontOfSize:size weight:NSFontWeightSemibold];
+    }
+    [copy drawAtPoint:NSMakePoint(PANEL_RIGHT - [copy sizeWithAttributes:copyStyle].width, 2.5) withAttributes:copyStyle];
+
     [NSGraphicsContext restoreGraphicsState];
 }
 
-// A cell shows remaining allowance: label and value on one line, bar underneath.
-// The stored provider percentage remains "used" for mascot motion, but the
-// readout deliberately inverts it so the bar and the number answer "how much
-// can I still use?" without mental subtraction.
 - (void)drawCell:(NSString *)label pct:(int)pct provider:(NSString *)provider
            shown:(double)shownRemaining index:(NSInteger)index
                x:(CGFloat)x width:(CGFloat)w dim:(CGFloat)dim
@@ -1405,33 +1464,6 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
             NSRectFill(NSMakeRect(x + fillW - 0.9, barY + 0.5, 1.0, barH - 1));
             [NSGraphicsContext restoreGraphicsState];
         }
-    }
-
-    // Ripple from the fingertip, and a brief flash of the whole bar.
-    if (self.pressT > 0 && self.pressX >= x && self.pressX <= x + w) {
-        CGFloat prog = 1 - self.pressT / 0.55;
-        [NSGraphicsContext saveGraphicsState];
-        NSRectClip(NSMakeRect(x - 3, 0, w + 6, kSceneH));
-        [[NSColor colorWithWhite:1 alpha:0.30 * (1 - prog)] set];
-        [track fill];
-        for (int k = 0; k < 2; k++) {
-            CGFloat pr = prog - k * 0.18;
-            if (pr <= 0) continue;
-            CGFloat r = 3 + pr * w * 0.55;
-            NSBezierPath *ring = [NSBezierPath bezierPathWithOvalInRect:
-                NSMakeRect(self.pressX - r, barY + barH / 2 - r * 0.42, 2 * r, r * 0.84)];
-            ring.lineWidth = 1.4 * (1 - pr) + 0.3;
-            [[[ink blendedColorWithFraction:0.5 ofColor:NSColor.whiteColor] colorWithAlphaComponent:0.9 * (1 - pr)] setStroke];
-            [ring stroke];
-        }
-        [NSGraphicsContext restoreGraphicsState];
-    }
-
-    // Ticks at 50 and 90 turn the remaining-allowance bar into a scale.
-    [[NSColor colorWithWhite:1.0 alpha:0.3 * dim] set];
-    for (NSNumber *frac in unavailable ? @[] : @[@0.5, @0.9]) {
-        CGFloat tx = w * frac.doubleValue;
-        if (tx > fillW) NSRectFill(NSMakeRect(x + tx, barY, 1, barH));
     }
 
     // Four limits leave a narrow cell. Keep the full provider/window label on
@@ -1976,18 +2008,18 @@ static int RenderFilm(NSString *dir, double secs, BOOL lensFilm) {
         }
         if (lensFilm) {
             // The same entry points as real fingers: tap, hold, scrub, release.
-            if (i == 36) [v beginLensAt:READ_X + 26];
+            // Tap Claude 7d (lasts), tap GPT 5h, then scrub the GPT 5h forecast
+            // end to end, then a 5h window that will run out before it resets.
+            if (i == 36) [v beginLensAt:READ_X + 130];
             if (i == 45) [v.lens end];
-            if (i == 138) [v beginLensAt:READ_X + 189];
-            if (i == 240) [v.lens end];
-            if (i == 300) [v beginLensAt:READ_X + 83];
-            if (i >= 306 && i <= 420) {
-                double t = (i - 306) / 114.0;
-                [v.lens moveTo:READ_X + 83 + (0.5 - 0.5 * cos(t * M_PI * 3)) * 57];
+            if (i == 240) [v beginLensAt:READ_X + 230];
+            if (i >= 252 && i <= 420) {
+                double t = (i - 252) / 168.0;
+                [v.lens moveTo:PANEL_TRACK_X0 + (0.5 - 0.5 * cos(t * M_PI * 2)) * (PANEL_TRACK_X1 - PANEL_TRACK_X0)];
             }
             if (i == 421) [v.lens end];
-            if (i == 480) { v.p5 = 94; v.resetMin = 12; [v beginLensAt:READ_X + 28]; }
-            if (i == 564) [v.lens end];
+            if (i == 500) { v.p5 = 84; v.resetMin = 150; [v beginLensAt:READ_X + 28]; }
+            if (i == 560) [v.lens end];
             [v advanceLens:1.0 / fps];
             [v advanceFX:1.0 / fps];
             if (i % 4 == 0) [v advance:1.0 / kFPS];
@@ -2027,7 +2059,8 @@ static int RenderFilmFX(NSString *dir) {
         double t = i / fps;
         if (i == (int)(1.6 * fps) || i == (int)(1.85 * fps) || i == (int)(2.1 * fps)) [v tapMascot:MascotTargetClaude];
         if (i == (int)(3.0 * fps)) [v tapMascot:MascotTargetGPT];
-        if (i == (int)(4.0 * fps)) { [v pressBarAt:READ_X + 60]; }
+        if (i == (int)(4.0 * fps)) [v beginLensAt:READ_X + 60];
+        if (i == (int)(4.3 * fps)) [v.lens end];
         if (i == (int)(5.5 * fps)) { v.x = v.gptX - 40; v.dir = 1; v.gptDir = -1; }
         if (i == (int)(7.0 * fps)) { v.throwVX = 260; v.act = ActWalk; }
         if (i == (int)(9.0 * fps)) { v.codexP7 = 12; v.p5 = 92; }

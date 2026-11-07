@@ -27,10 +27,10 @@ Everything answers a fingertip. Tap a mascot and it crouches, hops and throws
 pixel confetti in its own colour with a ground shock-ring and a heart; tap
 again quickly to chain a combo (`×2`, `×3`…) that flips it like a coin. Throws
 kick up dust and bounce off the wall with stars, and the two bump with a
-twinkle when they collide. Touching a bar ripples from the fingertip, sprays
-sparks and makes both mascots turn and hop toward it. Readings count up when
-they arrive and glide when they change, a highlight sweeps along the bars every
-few seconds, and a bar that is nearly exhausted breathes a red halo. Preview it
+twinkle when they collide. Touching a bar makes both mascots glance over at
+what you are reading. Readings count up when they arrive and glide when they
+change, a highlight sweeps along the bars every few seconds, and a bar that is
+nearly exhausted breathes a red halo. Preview it
 all with `./ClaudeTouchBar.app/Contents/MacOS/ClaudeTouchBar --film-fx /tmp/fx`.
 
 The creatures' behaviour is the gauge too: they stroll when you are under 30%,
@@ -38,14 +38,15 @@ pick up the pace past that, tire past 60%, and panic past 85%. GPT alternates
 between walking and short idle rests; tap either mascot for a small sparkle,
 or drag and release it to toss it along the runway.
 
-Tap a usage bar to open a glass lens with remaining allowance and reset countdown.
-Drag within that bar to move the lens with soft spring motion; the 10/50/100%
-marks are visual references and never change your allowance. Hold for 0.45 seconds
-to reveal the local reset time, including the date for multi-day windows. Release
-to let the lens settle back. Unavailable reset times are shown explicitly.
-The lens draws at 60 fps while the mascots retain their original pacing cadence.
-
-Preview the gestures using illustrative sample data with
+Touch a usage bar and the readout becomes a detail panel for that window: a
+ring gauge of what is left, when it resets as both a countdown and a clock, and
+a timeline of the whole window with a marker at *now*. From how much has been
+used so far, the panel works out the pace and says plainly whether the
+allowance lasts — `on pace · ~12% to spare at reset` — or not — `at this pace:
+runs out in 28m`, with the dead zone hatched red on the timeline. Drag along
+the timeline to read the forecast at any moment: `in 2h 03m · 15:38 → ~18%
+left`. A tap keeps the panel up for three seconds; a drag lingers on its last
+forecast, then springs away. Preview the gestures with
 `./ClaudeTouchBar.app/Contents/MacOS/ClaudeTouchBar --film-lens /tmp/lens-frames 10.5`
 (60 fps PNG sequence).
 
