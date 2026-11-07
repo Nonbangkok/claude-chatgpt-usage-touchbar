@@ -21,6 +21,7 @@
 #import "lens_motion.h"
 #import "effects.h"
 #import "night_sky.h"
+#import "gpt_sprite.h"
 #import <string.h>
 #import "usage_parser.h"
 
@@ -147,6 +148,9 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
 @property (nonatomic) CGFloat gptX, gptDir, gptPhase, gptKick;
 @property (nonatomic) GPTActivity gptActivity;
 @property (nonatomic) CGFloat claudeTapT, gptTapT;
+// GPT's life signs: blinks on its own clock, dozes after a long rest, grins
+// when tapped, startles when grabbed or flung.
+@property (nonatomic) double gptBlinkT, gptNextBlink, gptRestT, gptHappyT;
 @property (nonatomic) NSInteger activeUsageCell;
 @property (nonatomic) CGFloat usageTapT;
 @property (nonatomic, strong) UsageLens *lens;
@@ -196,6 +200,7 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
         _x = 40; _dir = 1; _p5 = 0; _p7 = 0; _resetMin = -1; _reset7dMin = -1; _longDays = 7; _codexLongDays = 7;
         _gptX = 155; _gptDir = -1;
         _gptActivity = (GPTActivity){NO, 0, 3.6};
+        _gptNextBlink = 2.0;
         _activeUsageCell = -1;
         _lens = [UsageLens new];
         _codexP5 = 0; _codexP7 = 0; _codexResetMin = -1; _codexReset7dMin = -1;
@@ -401,6 +406,25 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
     }
     self.gptPhase += dt * (moving ? gptSpeed / 11.0 : 0.7);
 
+    // Blink on an irregular clock; doze off after a long rest, with a drowsy
+    // pixel drifting up now and then; wake instantly when anything happens.
+    self.gptBlinkT = MAX(0, self.gptBlinkT - dt);
+    self.gptHappyT = MAX(0, self.gptHappyT - dt);
+    self.gptNextBlink -= dt;
+    if (self.gptNextBlink <= 0) {
+        self.gptBlinkT = 0.14;
+        self.gptNextBlink = 2.5 + (CGFloat)arc4random_uniform(400) / 100.0;
+    }
+    if (activity.resting && !self.dragging && fabs(self.gptKick) < 1.0) {
+        double before = self.gptRestT;
+        self.gptRestT += dt;
+        if (self.gptRestT > 2.2 && fmod(before, 1.4) > fmod(self.gptRestT, 1.4))
+            FXBurst(_fx, self.gptX + 9, 26, 1, 4, 8, M_PI * 0.4, M_PI * 0.6, 1.1, 1.5, -6,
+                    0.75f, 0.85f, 1.0f, FXKindPixel);
+    } else {
+        self.gptRestT = 0;
+    }
+
     MascotPair pair = { self.x, self.dir * SpeedForMood(m),
                         self.gptX, self.gptDir * gptSpeed + self.gptKick };
     if (ResolveMascotCollision(&pair, 34.0)) {
@@ -571,6 +595,7 @@ static void AccentRGB(MascotTarget who, float *r, float *g, float *b) {
                          .r = 1.0f, .g = 0.36f, .b = 0.52f, .kind = FXKindHeart };
     FXEmit(_fx, heart);
 
+    if (gpt) { self.gptHappyT = 1.2 + 0.3 * extra; self.gptRestT = 0; }
     if (combo >= 2) {
         if (gpt) { self.gptBadgeT = 0.8; self.gptBadgeN = combo; }
         else     { self.claudeBadgeT = 0.8; self.claudeBadgeN = combo; }
@@ -823,35 +848,26 @@ static void DrawGrid(const unsigned char *g, NSPoint origin, CGFloat px,
 // The user-provided bot stays raster rather than being approximated with a
 // vector icon. Nearest-neighbour interpolation keeps its deliberately chunky
 // pixels crisp at Touch Bar size.
-static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL resting, CGFloat tapT,
+static void DrawGPTMascot(CGFloat x, CGFloat direction, GPTFace face, int step, CGFloat bob,
                           CGFloat hopY, CGFloat squash, CGFloat spin) {
-    static NSImage *image;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSURL *url = [NSBundle.mainBundle URLForResource:@"GPTMascot" withExtension:@"png"];
-        image = [[NSImage alloc] initWithContentsOfURL:url];
-    });
-    if (!image) return;
-
-    NSGraphicsContext *context = NSGraphicsContext.currentContext;
-    NSImageInterpolation oldInterpolation = context.imageInterpolation;
-    context.imageInterpolation = NSImageInterpolationNone;
-    CGFloat bob = sin(phase * (resting ? 1.1 : 2.0)) * (resting ? 0.35 : 0.7);
-    NSRect frame = NSMakeRect(x - 15, 0.1 + bob, 30, 32.2);
-    // Squash/stretch about the feet, a coin-flip spin on a combo, and the
-    // walking mirror, all as one transform.
+    static unsigned char grid[GPT_N * GPT_N];
+    GPTSpriteFrame(face, step, grid);
+    CGFloat const px = 1.72;                         // the same cell as Clawd
+    NSPoint feet = NSMakePoint(x, 2.2 + bob);
+    // Hop, squash/stretch about the feet, the coin-flip spin on a combo, and
+    // the walking mirror, as one transform. The lift is clamped so the cloud
+    // never leaves the 30pt bar.
+    CGFloat rows = GPT_BOT - GPT_TOP + 1;
+    CGFloat lift = MIN(hopY, MAX(0, 30.8 - feet.y - rows * px * squash));
     CGFloat flip = (direction < 0 ? -1 : 1) * cos(spin * 2 * M_PI);
-    [context saveGraphicsState];
+    [NSGraphicsContext saveGraphicsState];
     NSAffineTransform *xf = NSAffineTransform.transform;
-    [xf translateXBy:NSMidX(frame) yBy:hopY];
+    [xf translateXBy:x yBy:feet.y + lift];
     [xf scaleXBy:flip / squash yBy:squash];
-    [xf translateXBy:-NSMidX(frame) yBy:0];
+    [xf translateXBy:-x yBy:-feet.y];
     [xf concat];
-    [image drawInRect:frame
-              fromRect:NSMakeRect(0, 0, image.size.width, image.size.height)
-             operation:NSCompositingOperationSourceOver fraction:1.0];
-    [context restoreGraphicsState];
-    context.imageInterpolation = oldInterpolation;
+    DrawGridPal(grid, feet, px, NO, NSColor.whiteColor, kGPTPalette, GPTInkCount, GPT_TOP, GPT_BOT);
+    [NSGraphicsContext restoreGraphicsState];
 }
 
 // The sky lives behind the runway only and stops at a clean edge where the
@@ -964,8 +980,23 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL rest
     // keeps their centres apart, so drawing order never hides a collision.
     DrawGroundGlow(self.gptX, _gptHop.y, [NSColor colorWithSRGBRed:0.37 green:0.70 blue:1.0 alpha:1]);
     DrawGroundGlow(self.x, _claudeHop.y, [NSColor colorWithSRGBRed:1.0 green:0.60 blue:0.42 alpha:1]);
-    DrawGPTMascot(self.gptX, self.resetLookTime > 0 ? 1 : self.gptDir, self.gptPhase, self.gptActivity.resting, self.gptTapT,
-                  _gptHop.y, _gptHop.squash, self.gptSpin);
+    {
+        BOOL held = self.dragging && self.dragTarget == MascotTargetGPT;
+        BOOL moving = !self.gptActivity.resting || fabs(self.gptKick) > 1.0;
+        GPTFace face = GPTFaceNormal;
+        if (held || fabs(self.gptKick) > 40)      face = GPTFaceSurprised;
+        else if (self.gptHappyT > 0)              face = GPTFaceHappy;
+        else if (self.gptBlinkT > 0)              face = GPTFaceBlink;
+        else if (self.resetLookTime > 0)          face = GPTFaceLook;
+        else if (self.gptRestT > 2.2)             face = GPTFaceSleepy;
+        int step = (moving && !held) ? ((int)(self.gptPhase * 2.0) & 3) : -1;
+        // Pixel bob: a half-cell hop on the walk beat, a slow breath at rest.
+        CGFloat gbob = moving ? ((((int)(self.gptPhase * 2.0)) & 1) ? 0.7 : 0)
+                              : ((((int)(self.gptPhase * 0.6)) & 1) ? 0.5 : 0);
+        if (held) gbob = sin(self.wiggleT * 15.0) * 1.2;
+        DrawGPTMascot(self.gptX, self.resetLookTime > 0 ? 1 : self.gptDir, face, step, gbob,
+                      _gptHop.y, _gptHop.squash, self.gptSpin);
+    }
 
     // Panic: motion streaks trailing behind.
     if (mood == MoodPanic) {

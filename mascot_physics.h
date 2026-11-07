@@ -25,6 +25,3 @@ typedef struct {
     double elapsed, duration;
 } GPTActivity;
 BOOL AdvanceGPTActivity(GPTActivity *activity, double dt);
-
-// Returns the bundled raster asset matching GPT's horizontal travel direction.
-NSString *GPTMascotResourceForDirection(double direction);

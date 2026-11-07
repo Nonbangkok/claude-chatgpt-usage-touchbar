@@ -179,6 +179,11 @@ if clang -fobjc-arc -framework Foundation -o /tmp/claude-touchbar-sky-test \
   pass=$((pass+1)); echo "  ok    night sky: parallax, twinkle, meteors"
 else fail=$((fail+1)); echo "  FAIL  night sky: parallax, twinkle, meteors"; fi
 
+if clang -fobjc-arc -framework Foundation -o /tmp/claude-touchbar-gpt-test \
+    tools/gpt-sprite-test.m gpt_sprite.m 2>/dev/null && /tmp/claude-touchbar-gpt-test; then
+  pass=$((pass+1)); echo "  ok    GPT sprite: faces and gait"
+else fail=$((fail+1)); echo "  FAIL  GPT sprite: faces and gait"; fi
+
 if ! rg -q 'escapeKeyReplacementItemIdentifier|sendEscape:|local\\.claude-touchbar\\.esc' main.m; then
   pass=$((pass+1)); echo "  ok    no replacement Escape key"
 else fail=$((fail+1)); echo "  FAIL  replacement Escape key is still present"; fi

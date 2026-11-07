@@ -1,9 +1,9 @@
 # Claude + Codex Usage Touch Bar
 
 Your live Claude Code and Codex usage on the MacBook Pro Touch Bar, with a
-small pixel creature pacing alongside it.
+pair of small pixel creatures pacing alongside it.
 
-![Claude and Codex usage with a transparent-background GPT mascot on the Touch Bar](docs/demo.gif)
+![Claude and Codex usage with two pixel mascots on the Touch Bar](docs/demo.gif)
 
 *Recorded with `make film` — the widget's own animation loop, rendered
 headless. No screen was filmed. The animation uses illustrative sample data.*
@@ -40,9 +40,11 @@ so his pacing reads as a journey. It ends where the readout begins, which
 stays on the dark panel the numbers were designed for.
 
 The creatures' behaviour is the gauge too: they stroll when you are under 30%,
-pick up the pace past that, tire past 60%, and panic past 85%. GPT alternates
-between walking and short idle rests; tap either mascot for a small sparkle,
-or drag and release it to toss it along the runway.
+pick up the pace past that, tire past 60%, and panic past 85%. GPT is drawn on the same 20×20 pixel grid and flat palette as Clawd, so the
+two read as one cast: it walks with the same four-beat gait, blinks on its own
+clock, glances over when you touch a bar, grins when tapped, startles when
+grabbed or flung, and dozes off after a long rest with a drowsy pixel drifting
+up. Tap either mascot, or drag and release it to toss it along the runway.
 
 Touch a usage bar and the readout becomes a detail panel for that window: a
 ring gauge of what is left, when it resets as both a countdown and a clock, and

@@ -80,6 +80,16 @@ int main(void) {
         for (int i = 0; i < 30; i++) FXHopKick(&hop, 58);
         Check(hop.vy <= 58 * (1 + 0.08 * 4) + 1e-9, @"combo strength is capped");
 
+        // Coarse time steps (a 15 fps film, a stalled frame) must not make the
+        // spring flap between its clamps.
+        FXHop coarse; FXHopInit(&coarse);
+        FXHopKick(&coarse, 48);
+        for (int i = 0; i < 30; i++) FXHopAdvance(&coarse, 1.0 / 15);
+        BOOL settled15 = fabs(coarse.squash - 1) < 0.02 && !FXHopIsActive(&coarse);
+        FXHopInit(&coarse); FXHopKick(&coarse, 48);
+        for (int i = 0; i < 12; i++) FXHopAdvance(&coarse, 0.25);
+        Check(settled15 && fabs(coarse.squash - 1) < 0.02, @"the squash settles even at 15 fps or after a stall");
+
         double v = 0;
         for (int i = 0; i < 120; i++) v = FXApproach(v, 73, 8, 1.0 / 60);
         Check(v == 73, @"a tween settles exactly on its target");

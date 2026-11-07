@@ -31,11 +31,6 @@ int main(void) {
         Check(MascotTargetAtPoint(95, 40, 150, 20) == MascotTargetNone,
               @"ignores touches between mascots");
 
-        Check([GPTMascotResourceForDirection(-1) isEqualToString:@"GPTMascot"],
-              @"uses the original GPT sprite before mirroring it left");
-        Check([GPTMascotResourceForDirection(1) isEqualToString:@"GPTMascot"],
-              @"keeps the existing GPT sprite when walking right");
-
         GPTActivity activity = {NO, 0, 2.0};
         Check(!AdvanceGPTActivity(&activity, 1.5) && !activity.resting,
               @"keeps GPT walking before its activity interval ends");

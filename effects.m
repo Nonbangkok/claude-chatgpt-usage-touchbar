@@ -83,30 +83,37 @@ int FXHopKick(FXHop *hop, double strength) {
 
 BOOL FXHopAdvance(FXHop *hop, double dt) {
     if (dt <= 0) return NO;
+    dt = fmin(dt, 0.25);
     BOOL landed = NO;
-    BOOL airborne = hop->y > 0 || hop->vy > 0;
-    if (airborne) {
-        hop->vy -= kHopGravity * dt;
-        hop->y += hop->vy * dt;
-        if (hop->y <= 0 && hop->vy < 0) {
-            double impact = fabs(hop->vy);
-            hop->y = 0; hop->vy = 0;
-            hop->squash = fmin(hop->squash, 1.0 - fmin(0.22, impact / 380.0));
-            hop->squashVelocity = 0;
-            landed = YES;
-            airborne = NO;
+    // The squash spring is stiff (k = 600); a single explicit step is only
+    // stable below ~1/20 s. Substep so a 15 fps film or a stalled frame never
+    // makes a sprite flap between the clamps.
+    int steps = (int)ceil(dt * 240);
+    double h = dt / steps;
+    for (int i = 0; i < steps; i++) {
+        BOOL airborne = hop->y > 0 || hop->vy > 0;
+        if (airborne) {
+            hop->vy -= kHopGravity * h;
+            hop->y += hop->vy * h;
+            if (hop->y <= 0 && hop->vy < 0) {
+                double impact = fabs(hop->vy);
+                hop->y = 0; hop->vy = 0;
+                hop->squash = fmin(hop->squash, 1.0 - fmin(0.22, impact / 380.0));
+                hop->squashVelocity = 0;
+                landed = YES;
+                airborne = NO;
+            }
         }
-    }
-    // Stretch along the motion while rising/falling, settle to 1 on the ground.
-    double target = airborne ? 1.0 + fmax(-0.03, fmin(0.035, hop->vy / 1500.0)) : 1.0;
-    double accel = -600.0 * (hop->squash - target) - 18.0 * hop->squashVelocity;
-    hop->squashVelocity += accel * dt;
-    hop->squash += hop->squashVelocity * dt;
-    hop->squash = fmax(0.7, fmin(1.25, hop->squash));
-
-    if (hop->comboTimer > 0) {
-        hop->comboTimer -= dt;
-        if (hop->comboTimer <= 0 && !airborne) { hop->comboTimer = 0; hop->combo = 0; }
+        // Stretch along the motion while rising/falling, settle to 1 on the ground.
+        double target = airborne ? 1.0 + fmax(-0.03, fmin(0.035, hop->vy / 1500.0)) : 1.0;
+        double accel = -600.0 * (hop->squash - target) - 18.0 * hop->squashVelocity;
+        hop->squashVelocity += accel * h;
+        hop->squash += hop->squashVelocity * h;
+        hop->squash = fmax(0.7, fmin(1.25, hop->squash));
+        if (hop->comboTimer > 0) {
+            hop->comboTimer -= h;
+            if (hop->comboTimer <= 0 && !airborne) { hop->comboTimer = 0; hop->combo = 0; }
+        }
     }
     return landed;
 }

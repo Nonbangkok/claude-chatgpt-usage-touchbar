@@ -41,7 +41,3 @@ BOOL AdvanceGPTActivity(GPTActivity *activity, double dt) {
     activity->resting = !activity->resting;
     return YES;
 }
-
-NSString *GPTMascotResourceForDirection(double direction) {
-    return @"GPTMascot";
-}
