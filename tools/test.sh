@@ -92,13 +92,28 @@ check "valid resets_at -> a number" \
 # the five-hour gauge, which is misleading even though both values are valid.
 check_codex "classifies windows by duration" \
   '{"rate_limit":{"primary_window":{"used_percent":17,"reset_at":1893456000,"limit_window_seconds":18000},"secondary_window":{"used_percent":42,"reset_at":1894060800,"limit_window_seconds":604800}}}' \
-  "17 42 * *"
+  "17 42 * * 7"
 check_codex "weekly-only primary window" \
   '{"rate_limit":{"primary_window":{"used_percent":42,"reset_at":1894060800,"limit_window_seconds":604800},"secondary_window":null}}' \
-  "-1 42 -1 *"
+  "-1 42 -1 * 7"
 check_codex "rejects string percentages" \
   '{"rate_limit":{"primary_window":{"used_percent":"17","reset_at":1893456000,"limit_window_seconds":18000}}}' \
-  "-1 -1 -1 -1"
+  "-1 -1 -1 -1 7"
+
+# A free ChatGPT plan has one 30-day window and no 5h or weekly one. Its length
+# must reach the widget, which would otherwise label it "7d".
+check_codex "free plan: single 30-day window" \
+  '{"rate_limit":{"primary_window":{"used_percent":12,"reset_at":1893456000,"limit_window_seconds":2592000},"secondary_window":null}}' \
+  "-1 12 -1 * 30"
+check_codex "unknown duration on the secondary window defaults to 7 days" \
+  '{"rate_limit":{"primary_window":{"used_percent":5,"reset_at":1893456000,"limit_window_seconds":18000},"secondary_window":{"used_percent":9,"reset_at":1894060800}}}' \
+  "5 9 * * 7"
+check_codex "implausible duration is clamped" \
+  '{"rate_limit":{"primary_window":{"used_percent":3,"reset_at":1893456000,"limit_window_seconds":999999999999}}}' \
+  "-1 3 -1 * 3650"
+check_codex "malformed rate_limit reports no windows" \
+  '{"rate_limit":null}' \
+  "-1 -1 -1 -1 7"
 
 # Malformed input must produce nothing at all, which the caller treats as stale
 # — printing a partial line would be read as a live measurement.

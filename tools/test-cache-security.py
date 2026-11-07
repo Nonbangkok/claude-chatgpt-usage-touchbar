@@ -11,7 +11,7 @@ import unittest
 SCRIPT = Path(__file__).resolve().parents[1] / "claude-touchbar.sh"
 CLAUDE_NONE = "claude 0 0 -1 -1 -1 none"
 CLAUDE_EXPIRED = "claude 0 0 -1 -1 -1 expired"
-CODEX_NONE = "codex 0 0 -1 -1 -1 none"
+CODEX_NONE = "codex 0 0 -1 -1 -1 none 7"
 
 
 class CacheSecurityTests(unittest.TestCase):
@@ -60,7 +60,7 @@ class CacheSecurityTests(unittest.TestCase):
         return "37 8 20 100 -1 - " + str(int(time.time()))
 
     def codex_valid(self):
-        return "18 42 44 5000 " + str(int(time.time()))
+        return "18 42 44 5000 7 " + str(int(time.time()))
 
     def run_all(self):
         result = subprocess.run(["/bin/bash", str(SCRIPT), "--raw"], env=self.env,
@@ -103,7 +103,7 @@ class CacheSecurityTests(unittest.TestCase):
         self.put(self.codex_valid(), self.codex_cache)
         lines = self.run_all()
         self.assertRegex(lines[0], r"^claude 37 8 20 100 [0-9]+ ok$")
-        self.assertRegex(lines[1], r"^codex 18 42 44 5000 [0-9]+ ok$")
+        self.assertRegex(lines[1], r"^codex 18 42 44 5000 [0-9]+ ok 7$")
         self.assertFalse(self.log.exists())
 
     def test_arithmetic_payloads_rejected_in_each_numeric_field(self):
@@ -193,9 +193,11 @@ class CacheSecurityTests(unittest.TestCase):
 
     def test_codex_malformed_records_rejected(self):
         now = str(int(time.time()))
-        for value in ("", "1 2", self.codex_valid() + " extra", "101 8 20 100 " + now,
-                      "1 2 999999999999999999999 100 " + now, "1 2 20 100 9999999999",
-                      "1 2 20 100 0", "1 2 20 525601 " + now,
+        for value in ("", "1 2", self.codex_valid() + " extra", "101 8 20 100 7 " + now,
+                      "1 2 999999999999999999999 100 7 " + now, "1 2 20 100 7 9999999999",
+                      "1 2 20 100 7 0", "1 2 20 525601 7 " + now,
+                      "1 2 20 100 0 " + now, "1 2 20 100 3651 " + now,   # days out of range
+                      "1 2 20 100 " + now,                              # old five-field shape
                       self.valid()):                                    # Claude's shape
             with self.subTest(value=value):
                 self.put(value, self.codex_cache)
@@ -203,7 +205,7 @@ class CacheSecurityTests(unittest.TestCase):
 
     def test_codex_arithmetic_payloads_rejected_in_each_field(self):
         payload = 'a[$(touch${IFS}' + str(self.marker) + ')]'
-        for index in range(5):
+        for index in range(6):
             with self.subTest(index=index):
                 values = self.codex_valid().split()
                 values[index] = payload
@@ -218,7 +220,7 @@ class CacheSecurityTests(unittest.TestCase):
         self.codex_cache.symlink_to(victim)
         self.assertEqual(self.run_codex(), CODEX_NONE)
         self.enable_codex()
-        self.assertRegex(self.run_codex(), r"^codex 17 42 [0-9]+ [0-9]+ 0 ok$")
+        self.assertRegex(self.run_codex(), r"^codex 17 42 [0-9]+ [0-9]+ 0 ok 7$")
         self.assertFalse(self.codex_cache.is_symlink())
         self.assertEqual(victim.read_text(), original)
         self.assertEqual(self.codex_cache.stat().st_mode & 0o777, 0o600)
@@ -242,6 +244,18 @@ class CacheSecurityTests(unittest.TestCase):
         self.put(self.valid(), self.codex_cache)
         self.assertEqual(self.run_codex(), CODEX_NONE)
 
+    def test_codex_thirty_day_window_reaches_the_widget(self):
+        # A free ChatGPT plan: one 30-day window, no 5h and no weekly one.
+        self.enable_codex()
+        self.env["MOCK_CODEX_RESPONSE"] = json.dumps({"rate_limit": {
+            "primary_window": {"used_percent": 12, "reset_at": time.time() + 86400 * 29,
+                               "limit_window_seconds": 2592000},
+            "secondary_window": None}})
+        self.assertRegex(self.run_codex(), r"^codex -1 12 -1 [0-9]+ 0 ok 30$")
+        self.assertEqual(self.codex_cache.read_text().split()[4], "30")
+        # And it is served from the cache, with the length preserved.
+        self.assertRegex(self.run_codex(), r"^codex -1 12 -1 [0-9]+ [0-9]+ ok 30$")
+
     # --- both --------------------------------------------------------------
 
     def test_concurrent_writes_leave_complete_private_records(self):
@@ -255,9 +269,9 @@ class CacheSecurityTests(unittest.TestCase):
             self.assertEqual(child.returncode, 0, err)
             lines = out.strip().splitlines()
             self.assertRegex(lines[0], r"^claude 37 8 -1 -1 [0-9]+ ok$")
-            self.assertRegex(lines[1], r"^codex 17 42 [0-9]+ [0-9]+ [0-9]+ ok$")
+            self.assertRegex(lines[1], r"^codex 17 42 [0-9]+ [0-9]+ [0-9]+ ok 7$")
         self.assertEqual(len(self.cache.read_text().split()), 7)
-        self.assertEqual(len(self.codex_cache.read_text().split()), 5)
+        self.assertEqual(len(self.codex_cache.read_text().split()), 6)
         self.assertEqual(self.cache.stat().st_mode & 0o777, 0o600)
         self.assertEqual(self.codex_cache.stat().st_mode & 0o777, 0o600)
         self.assertEqual(sorted(p.name for p in self.directory.iterdir()),

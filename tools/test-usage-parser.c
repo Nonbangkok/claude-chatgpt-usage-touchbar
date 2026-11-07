@@ -23,6 +23,12 @@ static void expect_reading(const UsageOutput *out, UsageProviderID provider,
     checks++;
 }
 
+static void expect_days(const UsageOutput *out, UsageProviderID provider, int days) {
+    assert(out->valid[provider] == 1);
+    assert(out->reading[provider].longDays == days);
+    checks++;
+}
+
 /* Parses `text`, requiring exactly `found` providers. */
 static UsageOutput parse(const char *text, size_t length, int found) {
     UsageOutput out;
@@ -68,6 +74,28 @@ int main(void) {
 
     good_claude("claude 37 8 20 100 0 ok\n", 37, 8, 20, 100, 0, "ok");
     good_claude("claude 37 8 20 100 0 ok", 37, 8, 20, 100, 0, "ok");
+
+    /* The optional trailing token is the long window's length in days. */
+    {
+        const char *free_plan = "codex -1 12 -1 43200 0 ok 30\n";
+        UsageOutput out = parse(free_plan, strlen(free_plan), 1);
+        expect_reading(&out, UsageProviderCodex, -1, 12, -1, 43200, 0, "ok");
+        expect_days(&out, UsageProviderCodex, 30);
+        const char *no_days = "codex 18 42 44 5000 0 ok\n";
+        out = parse(no_days, strlen(no_days), 1);
+        expect_days(&out, UsageProviderCodex, 7);                 /* default */
+        const char *edges = "codex 1 2 3 4 5 ok 1\ncodex 1 2 3 4 5 ok 3650\n";
+        out = parse(edges, strlen(edges), 1);
+        expect_days(&out, UsageProviderCodex, 3650);              /* newest wins */
+        const char *claude_days = "claude 1 2 3 4 5 ok 7\n";
+        out = parse(claude_days, strlen(claude_days), 1);
+        expect_days(&out, UsageProviderClaude, 7);
+        /* An invalid days token invalidates the whole line, never half of it. */
+        bad("codex 1 2 3 4 5 ok 0\n"); bad("codex 1 2 3 4 5 ok 3651\n");
+        bad("codex 1 2 3 4 5 ok -1\n"); bad("codex 1 2 3 4 5 ok 7d\n");
+        bad("codex 1 2 3 4 5 ok 30 extra\n"); bad("codex 1 2 3 4 5 ok 99999999999\n");
+        bad("codex 1 2 3 4 5 ok a[$(touch${IFS}/tmp/x)]\n");
+    }
     good_claude("claude 0 0 -1 -1 -1 expired\n", 0, 0, -1, -1, -1, "expired");
     good_claude("claude 0 0 -1 -1 -1 none\n", 0, 0, -1, -1, -1, "none");
     /* A window the API does not report is -1; the other window must survive. */
@@ -189,6 +217,7 @@ int main(void) {
                 assert(r->resetMin >= -1 && r->resetMin <= 525600);
                 assert(r->reset7dMin >= -1 && r->reset7dMin <= 525600);
                 assert(r->ageSec >= -1);
+                assert(r->longDays >= 1 && r->longDays <= 3650);
                 assert(memchr(r->state, 0, sizeof(r->state)) != NULL);
             }
         }

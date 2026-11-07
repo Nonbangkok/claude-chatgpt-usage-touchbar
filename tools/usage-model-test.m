@@ -31,6 +31,19 @@ int main(void) {
                 @"an unreported 5h window does not discard the weekly reading");
         usage = ParseUsageRecord(@"codex 18 42 44 6150 0 ok");
 
+        usage = ParseUsageRecord(@"codex -1 12 -1 43200 0 ok 30");
+        require(usage != nil && usage.longDays == 30 && usage.p7 == 12,
+                @"a free plan's 30-day window length is preserved");
+        require([UsagePeriodLabel(usage.longDays) isEqualToString:@"30d"],
+                @"a 30-day window is labelled 30d");
+        usage = ParseUsageRecord(@"codex 18 42 44 6150 0 ok");
+        require(usage.longDays == 7 && [UsagePeriodLabel(usage.longDays) isEqualToString:@"7d"],
+                @"records without a length default to the weekly 7d label");
+        require([UsagePeriodLabel(0) isEqualToString:@"7d"],
+                @"an invalid length falls back to 7d rather than printing 0d");
+        require(ParseUsageRecord(@"codex 18 42 44 6150 0 ok 0") == nil,
+                @"an out-of-range window length rejects the record");
+
         require(ParseUsageRecord(@"unknown 99 99 0 0 ok") == nil,
                 @"unknown providers are rejected");
         require(usage.p5 == 18 && usage.p7 == 42,

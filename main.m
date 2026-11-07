@@ -114,8 +114,19 @@ static int ClipForMood(Mood m, int previous) {
     return pool[0] < kClawdClipCount ? pool[0] : 0;
 }
 
+// The healthy-state colour belongs to the provider: Claude is orange, the
+// others (ChatGPT/Codex) stay blue. Warning amber and alarm red are shared, so
+// "running low" reads the same whichever account it is.
+static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
+    if ([provider isEqualToString:@"claude"])
+        return lens ? [NSColor colorWithSRGBRed:1.00 green:0.58 blue:0.42 alpha:1]
+                    : [NSColor colorWithSRGBRed:0.851 green:0.467 blue:0.341 alpha:1];   // #D97757
+    return lens ? [NSColor colorWithSRGBRed:0.35 green:0.72 blue:1 alpha:1]
+                : [NSColor colorWithSRGBRed:0.173 green:0.533 blue:0.945 alpha:1];
+}
+
 @interface PetView : NSView
-@property (nonatomic) int p5, p7, resetMin, reset7dMin, ageSec, scopedPct;
+@property (nonatomic) int p5, p7, resetMin, reset7dMin, ageSec, scopedPct, longDays, codexLongDays;
 @property (nonatomic, copy) NSString *scopedName;   // per-model weekly cap (e.g. Fable)
 @property (nonatomic, copy) NSString *state;   // ok | stale | expired | none
 @property (nonatomic) int codexP5, codexP7, codexResetMin, codexReset7dMin, codexAgeSec;
@@ -156,7 +167,7 @@ static int ClipForMood(Mood m, int previous) {
 
 - (instancetype)initWithFrame:(NSRect)f {
     if ((self = [super initWithFrame:f])) {
-        _x = 40; _dir = 1; _p5 = 0; _p7 = 0; _resetMin = -1; _reset7dMin = -1;
+        _x = 40; _dir = 1; _p5 = 0; _p7 = 0; _resetMin = -1; _reset7dMin = -1; _longDays = 7; _codexLongDays = 7;
         _gptX = 155; _gptDir = -1;
         _gptActivity = (GPTActivity){NO, 0, 3.6};
         _activeUsageCell = -1;
@@ -750,25 +761,27 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     // a free ChatGPT plan has neither a 5h nor a weekly one — so an empty gauge
     // there is noise. A provider that is expired or has no data keeps both
     // placeholder cells, because then we simply do not know what it has.
-    void (^addProvider)(NSString *, BOOL, NSString *, int, int, int, int) =
-        ^(NSString *name, BOOL ready, NSString *providerState, int p5, int p7, int reset5, int reset7) {
+    void (^addProvider)(NSString *, NSString *, BOOL, NSString *, int, int, int, int, int) =
+        ^(NSString *name, NSString *provider, BOOL ready, NSString *providerState,
+          int p5, int p7, int reset5, int reset7, int longDays) {
             BOOL has5 = !ready || p5 >= 0;
             BOOL has7 = !ready || p7 >= 0;
             if (has5)
                 [cells addObject:@[usageLabel(name, @"5h", providerState),
-                                   @(ready ? p5 : -1), providerState, @(reset5)]];
+                                   @(ready ? p5 : -1), providerState, @(reset5), provider]];
             if (has7)
-                [cells addObject:@[usageLabel(name, @"7d", providerState),
-                                   @(ready ? p7 : -1), providerState, @(reset7)]];
+                [cells addObject:@[usageLabel(name, UsagePeriodLabel(longDays), providerState),
+                                   @(ready ? p7 : -1), providerState, @(reset7), provider]];
             if (!has5 && !has7)   // live but reporting nothing: one honest placeholder
-                [cells addObject:@[[name stringByAppendingString:@" —"], @-1, providerState, @-1]];
+                [cells addObject:@[[name stringByAppendingString:@" —"], @-1, providerState, @-1, provider]];
         };
     if ([visible containsObject:@"claude"])
-        addProvider(claudeName, claudeReady, self.state,
-                    self.p5, self.p7, self.resetMin, self.reset7dMin);
+        addProvider(claudeName, @"claude", claudeReady, self.state,
+                    self.p5, self.p7, self.resetMin, self.reset7dMin, self.longDays);
     if ([visible containsObject:@"codex"])
-        addProvider(codexName, codexReady, self.codexState,
-                    self.codexP5, self.codexP7, self.codexResetMin, self.codexReset7dMin);
+        addProvider(codexName, @"codex", codexReady, self.codexState,
+                    self.codexP5, self.codexP7, self.codexResetMin, self.codexReset7dMin,
+                    self.codexLongDays);
 
     return cells;
 }
@@ -786,7 +799,7 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
         CGFloat dim = [providerState isEqualToString:@"stale"] ? 0.72 : 1.0;
         BOOL selected = self.usageTapT > 0 && self.activeUsageCell == i;
         NSString *label = selected ? UsageResetDisplay([cells[i][3] intValue]) : cells[i][0];
-        [self drawCell:cells[i][0] pct:[cells[i][1] intValue]
+        [self drawCell:cells[i][0] pct:[cells[i][1] intValue] provider:cells[i][4]
                      x:READ_X + i * (cellW + CELL_GAP) width:cellW dim:dim
                   effect:(selected ? self.usageTapT / 2.5 : 0) resetLabel:label];
         int reset = [cells[i][3] intValue];
@@ -819,7 +832,7 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     NSColor *tint = remaining <= 10
         ? [NSColor colorWithSRGBRed:1 green:0.32 blue:0.34 alpha:1]
         : remaining <= 50 ? [NSColor colorWithSRGBRed:1 green:0.76 blue:0.34 alpha:1]
-        : [NSColor colorWithSRGBRed:0.35 green:0.72 blue:1 alpha:1];
+        : ProviderAccent(self.lensCell[4], YES);
     CGFloat cx = MAX(READ_X + 17, MIN(l.x, READ_X + READ_W - 17));
     CGFloat cy = 15;
     CGFloat r = 10.6 * MAX(0.15, l.amount);
@@ -944,8 +957,9 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
 // The stored provider percentage remains "used" for mascot motion, but the
 // readout deliberately inverts it so the bar and the number answer "how much
 // can I still use?" without mental subtraction.
-- (void)drawCell:(NSString *)label pct:(int)pct x:(CGFloat)x width:(CGFloat)w dim:(CGFloat)dim
-           effect:(CGFloat)effect resetLabel:(NSString *)resetLabel {
+- (void)drawCell:(NSString *)label pct:(int)pct provider:(NSString *)provider
+               x:(CGFloat)x width:(CGFloat)w dim:(CGFloat)dim
+          effect:(CGFloat)effect resetLabel:(NSString *)resetLabel {
     BOOL unavailable = pct < 0;
     int remaining = UsageRemainingPercent(pct);
     UsageRemainingLevel level = UsageRemainingLevelForUsedPercent(pct);
@@ -955,7 +969,7 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     else if (level == UsageRemainingLevelWarning)
         ink = [NSColor colorWithSRGBRed:0.949 green:0.706 blue:0.161 alpha:1.0];  // ≤50% left
     else
-        ink = [NSColor colorWithSRGBRed:0.173 green:0.533 blue:0.945 alpha:1.0];
+        ink = ProviderAccent(provider, NO);
 
     BOOL compact = w < 82;
     CGFloat labelSize = effect > 0 ? 8.0 : (compact ? 7.0 : 10.0);
@@ -1432,6 +1446,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
                 self.pet.p7 = claude.p7;
                 self.pet.resetMin = claude.resetMin;
                 self.pet.reset7dMin = claude.reset7dMin;
+                self.pet.longDays = claude.longDays;
                 self.pet.ageSec = claude.ageSec;
                 self.pet.state = claude.state;
             }
@@ -1440,6 +1455,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
                 self.pet.codexP7 = codex.p7;
                 self.pet.codexResetMin = codex.resetMin;
                 self.pet.codexReset7dMin = codex.reset7dMin;
+                self.pet.codexLongDays = codex.longDays;
                 self.pet.codexAgeSec = codex.ageSec;
                 self.pet.codexState = codex.state;
                 self.pet.codexHaveData = codex.available;
@@ -1474,6 +1490,7 @@ static int RenderStates(NSString *dir) {
         @"10-codex-stale": @[@26, @91, @125, @"ok", @0, @"", @18, @42, @44, @"stale"],
         @"11-codex-expired": @[@26, @91, @125, @"ok", @0, @"", @0, @0, @-1, @"expired"],
         @"13-no-5h-either": @[@-1, @41, @-1, @"ok", @0, @"", @-1, @0, @-1, @"ok"],
+        @"15-free-chatgpt-30d": @[@-1, @41, @-1, @"ok", @0, @"", @-1, @12, @-1, @"ok", @30],
         @"14-claude-no-5h": @[@-1, @41, @-1, @"ok", @0, @"", @18, @42, @44, @"ok"],
         @"12-claude-none": @[@0, @0, @-1, @"none", @0, @"", @18, @42, @44, @"ok"],
     };
@@ -1489,6 +1506,7 @@ static int RenderStates(NSString *dir) {
             v.codexP5 = [s[6] intValue]; v.codexP7 = [s[7] intValue];
             v.codexResetMin = [s[8] intValue]; v.codexState = s[9];
             v.codexAgeSec = 300;
+            if (s.count >= 11) v.codexLongDays = [s[10] intValue];
             v.codexHaveData = ![v.codexState isEqualToString:@"none"] &&
                                ![v.codexState isEqualToString:@"expired"];
         }

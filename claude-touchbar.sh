@@ -2,7 +2,9 @@
 # Claude usage for the Touch Bar widget.
 #
 # --raw prints one record per provider:
-#   "claude|codex <5h%> <7d%> <5hResetMin> <7dResetMin> <ageSec> <state>"
+#   "claude|codex <5h%> <7d%> <5hResetMin> <7dResetMin> <ageSec> <state> [longDays]"
+# longDays is the length of the long window (7 unless the plan differs, e.g. a
+# free ChatGPT plan's single 30-day window); it is omitted for Claude.
 #   state: ok      — fresh reading from the API
 #          stale   — API unreachable, showing the last good numbers
 #          expired — the OAuth token has expired; run `claude -p hi` to refresh
@@ -41,7 +43,7 @@ import os, re, stat, sys, time, uuid
 # or None, index of the timestamp). Only these two files can ever be touched.
 SCHEMAS = {
     "usage": (7, [(-1, 100), (-1, 100), (-1, 525600), (-1, 525600), (-1, 100)], 5, 6),
-    "codex-usage": (5, [(-1, 100), (-1, 100), (-1, 525600), (-1, 525600)], None, 4),
+    "codex-usage": (6, [(-1, 100), (-1, 100), (-1, 525600), (-1, 525600), (1, 3650)], None, 5),
 }
 
 def record(schema, text):
@@ -219,11 +221,11 @@ fi
 # Codex uses the ChatGPT plan token created by the Codex CLI. The usage endpoint
 # is undocumented, so everything below is deliberately defensive: a schema
 # change leaves this provider stale/none rather than inventing a percentage.
-# Cache record (`codex-usage`): "5h 7d 5hReset 7dReset epoch"
+# Cache record (`codex-usage`): "5h 7d 5hReset 7dReset longWindowDays epoch"
 CTTL=60
-CP5=; CP7=; CRESET=-1; CRESET7=-1; CSTAMP=0; CAGE=-1; cstate=ok
+CP5=; CP7=; CRESET=-1; CRESET7=-1; CDAYS=7; CSTAMP=0; CAGE=-1; cstate=ok
 if cvalidated=$(cache_io read codex-usage); then
-  read -r CP5 CP7 CRESET CRESET7 CSTAMP <<< "$cvalidated"
+  read -r CP5 CP7 CRESET CRESET7 CDAYS CSTAMP <<< "$cvalidated"
 fi
 CAGE=$(( $(date +%s) - ${CSTAMP:-0} ))
 
@@ -274,9 +276,10 @@ except Exception: sys.exit(0)
 
 rate_limit = j.get("rate_limit")
 if not isinstance(rate_limit, dict):
-    print("-1 -1 -1 -1"); sys.exit(0)
+    print("-1 -1 -1 -1 7"); sys.exit(0)
 
 p5 = p7 = reset5 = reset7 = -1
+days = 7    # length of the long window; free plans have a single 30-day one
 for index, key in enumerate(("primary_window", "secondary_window")):
     window = rate_limit.get(key)
     if not isinstance(window, dict):
@@ -292,6 +295,8 @@ for index, key in enumerate(("primary_window", "secondary_window")):
         is_weekly = duration >= 86400
     if is_weekly:
         p7 = round(percent)
+        if isinstance(duration, (int, float)) and not isinstance(duration, bool):
+            days = min(3650, max(1, round(duration / 86400)))
         if isinstance(reset_at, (int, float)) and not isinstance(reset_at, bool):
             reset7 = max(0, round((reset_at - time.time()) / 60))
     else:
@@ -299,13 +304,13 @@ for index, key in enumerate(("primary_window", "secondary_window")):
         if isinstance(reset_at, (int, float)) and not isinstance(reset_at, bool):
             reset5 = max(0, round((reset_at - time.time()) / 60))
 
-print(f"{p5} {p7} {reset5} {reset7}")
+print(f"{p5} {p7} {reset5} {reset7} {days}")
 # CODEX_PARSER_END
 ')
       case "$cparsed" in
         ''|-1\ -1\ *) cstate=stale ;;
         *) if cvalidated=$(cache_io write codex-usage "$cparsed $(date +%s)"); then
-             read -r CP5 CP7 CRESET CRESET7 CSTAMP <<< "$cvalidated"
+             read -r CP5 CP7 CRESET CRESET7 CDAYS CSTAMP <<< "$cvalidated"
              CAGE=0; cstate=ok
            else
              cstate=stale
@@ -318,7 +323,7 @@ print(f"{p5} {p7} {reset5} {reset7}")
 fi
 
 if [ -z "${CP5:-}" ]; then
-  CP5=0; CP7=0; CRESET=-1; CRESET7=-1; CAGE=-1
+  CP5=0; CP7=0; CRESET=-1; CRESET7=-1; CDAYS=7; CAGE=-1
   [ "$cstate" = expired ] || cstate=none
 elif [ "$cstate" != ok ]; then
   CAGE=$(( $(date +%s) - ${CSTAMP:-0} ))
@@ -327,7 +332,7 @@ fi
 case "${1:-}" in
   --raw)
     printf 'claude %s %s %s %s %s %s\n' "$P5" "$P7" "$RESET" "$RESET7" "$AGE" "$state"
-    printf 'codex %s %s %s %s %s %s\n' "$CP5" "$CP7" "$CRESET" "$CRESET7" "$CAGE" "$cstate"
+    printf 'codex %s %s %s %s %s %s %s\n' "$CP5" "$CP7" "$CRESET" "$CRESET7" "$CAGE" "$cstate" "$CDAYS"
     ;;
   *)
     printf 'Claude: 5h %s%%  7d %s%% (%s)\n' "$P5" "$P7" "$state"

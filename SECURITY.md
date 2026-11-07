@@ -97,10 +97,10 @@ values:
 
 ```
 usage        <5h%> <7d%> <5hResetMin> <7dResetMin> <scoped%> <model> <unixTimestamp>   (Claude)
-codex-usage  <5h%> <7d%> <5hResetMin> <7dResetMin> <unixTimestamp>                      (Codex)
+codex-usage  <5h%> <7d%> <5hResetMin> <7dResetMin> <longWindowDays> <unixTimestamp>  (Codex)
 ```
 
-Percentages, reset times, a sanitized model name (`[A-Za-z0-9_.-]`, at most 64
+Percentages, reset times, the long window's length in days (1–3650), a sanitized model name (`[A-Za-z0-9_.-]`, at most 64
 characters) and a timestamp. No token, account ID, or other identifier is
 cached. Delete either file whenever you like; it is rebuilt within a minute.
 

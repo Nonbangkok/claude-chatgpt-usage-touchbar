@@ -11,6 +11,7 @@ UsageProvider *UsageProviderFromReading(UsageProviderID provider, const UsageRea
     usage.p7 = reading->p7;
     usage.resetMin = reading->resetMin;
     usage.reset7dMin = reading->reset7dMin;
+    usage.longDays = reading->longDays;
     usage.ageSec = reading->ageSec;
     usage.state = [NSString stringWithUTF8String:reading->state];
     usage.available = strcmp(reading->state, "none") != 0 && strcmp(reading->state, "expired") != 0;
@@ -55,6 +56,7 @@ UsageProvider *DemoUsageProvider(NSString *name) {
         usage.resetMin = 45 + (int)arc4random_uniform(220);
     }
     usage.reset7dMin = 2 * 24 * 60 + (int)arc4random_uniform(5 * 24 * 60);
+    usage.longDays = 7;
     usage.ageSec = 0;
     return usage;
 }
@@ -82,4 +84,8 @@ UsageRemainingLevel UsageRemainingLevelForUsedPercent(int usedPercent) {
     if (remaining >= 0 && remaining <= 10) return UsageRemainingLevelCritical;
     if (remaining >= 0 && remaining <= 50) return UsageRemainingLevelWarning;
     return UsageRemainingLevelNormal;
+}
+
+NSString *UsagePeriodLabel(int days) {
+    return [NSString stringWithFormat:@"%dd", days >= 1 ? days : 7];
 }

@@ -3,8 +3,10 @@
 // so both login banners and trailing shell diagnostics can be ignored.
 //
 // Protocol: one record per provider, six fields after the provider name:
-//   "<claude|codex> <5h%> <7d%> <5hResetMin> <7dResetMin> <ageSec> <state>"
-// The newest valid record of each provider wins; anything else is noise.
+//   "<claude|codex> <5h%> <7d%> <5hResetMin> <7dResetMin> <ageSec> <state> [longDays]"
+// longDays (1...3650, default 7) is the length of the long window, e.g. 30 for
+// a free ChatGPT plan. The newest valid record of each provider wins; anything
+// else is noise.
 #pragma once
 #include <limits.h>
 #include <stddef.h>
@@ -13,7 +15,7 @@
 typedef enum { UsageProviderClaude = 0, UsageProviderCodex = 1 } UsageProviderID;
 
 typedef struct {
-    int p5, p7, resetMin, reset7dMin, ageSec;
+    int p5, p7, resetMin, reset7dMin, ageSec, longDays;
     char state[8];
 } UsageReading;
 
@@ -52,17 +54,17 @@ static inline int UsageInteger(UsageToken token, int maximum, int *result) {
 static inline int ParseUsageLine(const char *text, size_t length,
                           UsageProviderID *provider, UsageReading *out) {
     if (!text || !provider || !out || length == 0 || length > 512) return 0;
-    UsageToken fields[8];
+    UsageToken fields[9];
     size_t count = 0, i = 0;
     while (i < length) {
         while (i < length && (text[i] == ' ' || text[i] == '\t')) ++i;
         if (i == length) break;
-        if (count == 8) return 0;
+        if (count == 9) return 0;
         size_t start = i;
         while (i < length && text[i] != ' ' && text[i] != '\t') ++i;
         fields[count++] = (UsageToken){text + start, i - start};
     }
-    if (count != 7) return 0;
+    if (count != 7 && count != 8) return 0;
 
     UsageProviderID id;
     if (UsageTokenEquals(fields[0], "claude")) id = UsageProviderClaude;
@@ -70,6 +72,7 @@ static inline int ParseUsageLine(const char *text, size_t length,
     else return 0;
 
     UsageReading candidate = {0};
+    candidate.longDays = 7;
     if (!UsageInteger(fields[1], 100, &candidate.p5) ||
         !UsageInteger(fields[2], 100, &candidate.p7) ||
         !UsageInteger(fields[3], 525600, &candidate.resetMin) ||
@@ -81,6 +84,8 @@ static inline int ParseUsageLine(const char *text, size_t length,
     if (!(UsageTokenEquals(fields[6], "ok") || UsageTokenEquals(fields[6], "stale") ||
           UsageTokenEquals(fields[6], "expired") || UsageTokenEquals(fields[6], "none"))) return 0;
     memcpy(candidate.state, fields[6].text, fields[6].length);
+    if (count == 8 && (!UsageInteger(fields[7], 3650, &candidate.longDays) ||
+                       candidate.longDays < 1)) return 0;
     *provider = id;
     *out = candidate;
     return 1;
