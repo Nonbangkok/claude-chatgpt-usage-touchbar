@@ -33,6 +33,12 @@ change, a highlight sweeps along the bars every few seconds, and a bar that is
 nearly exhausted breathes a red halo. Preview it
 all with `./ClaudeTouchBar.app/Contents/MacOS/ClaudeTouchBar --film-fx /tmp/fx`.
 
+Behind the runway is a night sky: three depths of pixel stars that breathe
+slowly and occasionally glint, a thin crescent moon, and a meteor every ten
+to twenty seconds. The sky drifts against Clawd's travel, nearer stars faster,
+so his pacing reads as a journey. It fades to black before the readout, which
+stays on the dark panel the numbers were designed for.
+
 The creatures' behaviour is the gauge too: they stroll when you are under 30%,
 pick up the pace past that, tire past 60%, and panic past 85%. GPT alternates
 between walking and short idle rests; tap either mascot for a small sparkle,

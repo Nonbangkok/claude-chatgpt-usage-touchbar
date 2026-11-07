@@ -20,6 +20,7 @@
 #import "usage_model.h"
 #import "lens_motion.h"
 #import "effects.h"
+#import "night_sky.h"
 #import <string.h>
 #import "usage_parser.h"
 
@@ -185,9 +186,10 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
 @implementation PetView {
     FXSystem *_fx;
     FXHop _claudeHop, _gptHop;
+    NightSky *_sky;
 }
 
-- (void)dealloc { free(_fx); }
+- (void)dealloc { free(_fx); free(_sky); }
 
 - (instancetype)initWithFrame:(NSRect)f {
     if ((self = [super initWithFrame:f])) {
@@ -204,6 +206,8 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
         _fx = calloc(1, sizeof(FXSystem));
         FXInit(_fx, 0x5eed1234u);
         FXHopInit(&_claudeHop); FXHopInit(&_gptHop);
+        _sky = calloc(1, sizeof(NightSky));
+        NightSkyInit(_sky, READ_X, kSceneH, 0x57a55u);
         _shownRemaining = [NSMutableDictionary new];
         _fxTargets = [NSMutableDictionary new];
         _fxPrevTargets = [NSMutableDictionary new];
@@ -583,6 +587,14 @@ static void AccentRGB(MascotTarget who, float *r, float *g, float *b) {
 // redraw only while something is actually moving, so an idle bar stays cheap.
 - (void)advanceFX:(double)dt {
     self.fxClock += dt;
+    // The sky scrolls against Clawd's travel, so his walk reads as a journey.
+    // Only what actually moves him counts: pacing, a throw, or a drag.
+    double drift = 0;
+    if (self.dragging && self.dragTarget == MascotTargetClaude) drift = self.dragVX * 6.0;
+    else if (fabs(self.throwVX) > 1.0) drift = self.throwVX;
+    else if (self.act == ActWalk) drift = self.dir * SpeedForMood(MoodForUsage(self.p5));
+    NightSkyAdvance(_sky, dt, drift * 0.35);
+    if (_sky->meteorActive) self.needsDisplay = YES;
     self.collisionCooldown = MAX(0, self.collisionCooldown - dt);
     BOOL active = FXAdvance(_fx, dt) > 0;
 
@@ -842,9 +854,87 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL rest
     context.imageInterpolation = oldInterpolation;
 }
 
+// The sky lives behind the runway only; it fades to black well before the
+// readout so the numbers stay on the dark panel they were designed for.
+- (void)drawNightSky {
+    CGFloat skyW = READ_X - 4;
+    NSRect sky = NSMakeRect(0, 0, skyW, kSceneH);
+    [NSGraphicsContext saveGraphicsState];
+    NSRectClip(sky);
+    // Deep night: near-black indigo at the top, a faint violet-blue glow at the
+    // horizon, as if a city were just over the edge of the bar.
+    NSGradient *night = [[NSGradient alloc] initWithColorsAndLocations:
+        [NSColor colorWithSRGBRed:0.015 green:0.020 blue:0.060 alpha:1], 0.0,
+        [NSColor colorWithSRGBRed:0.035 green:0.045 blue:0.120 alpha:1], 0.45,
+        [NSColor colorWithSRGBRed:0.10 green:0.075 blue:0.200 alpha:1], 0.86,
+        [NSColor colorWithSRGBRed:0.16 green:0.10 blue:0.22 alpha:1], 1.0, nil];
+    [night drawInRect:sky angle:270];
+    // A soft band of distant haze just above the ground line.
+    NSGradient *haze = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithSRGBRed:0.30 green:0.22 blue:0.45 alpha:0.22]
+                                                    endingColor:[NSColor colorWithSRGBRed:0.30 green:0.22 blue:0.45 alpha:0]];
+    [haze drawInRect:NSMakeRect(0, 0.5, skyW, 7) angle:90];
+
+    // Stars: far ones are cold pinpricks, near ones warmer and larger, with a
+    // four-point glint on the brightest moments.
+    for (int i = 0; i < SKY_STARS; i++) {
+        const SkyStar *st = &_sky->stars[i];
+        double x = NightSkyStarX(_sky, i), b = NightSkyStarBrightness(_sky, i);
+        NSColor *c = [NSColor colorWithSRGBRed:0.80 + 0.20 * st->warmth
+                                         green:0.86 + 0.08 * st->warmth
+                                          blue:1.00 - 0.30 * st->warmth alpha:b * 0.95];
+        [c set];
+        CGFloat sz = st->size;
+        NSRectFill(NSMakeRect(x - sz / 2, st->y - sz / 2, sz, sz));
+        // Only a true glint (the rare sharp flash, not the slow breathing)
+        // earns a tiny four-point sparkle, kept small enough to stay a star.
+        if (b > 0.96 && st->depth > 0.35) {
+            CGFloat arm = sz * 0.9 + (b - 0.96) * 30;
+            [[c colorWithAlphaComponent:(b - 0.96) * 14] set];
+            NSRectFill(NSMakeRect(x - arm, st->y - 0.25, arm * 2, 0.5));
+            NSRectFill(NSMakeRect(x - 0.25, st->y - arm, 0.5, arm * 2));
+        }
+    }
+
+    // A thin crescent, high and to the left, out of the mascots' way.
+    NSPoint moon = NSMakePoint(22 - fmod(_sky->scroll * 0.03, 8), 24.5);
+    CGFloat mr = 3.4;
+    for (int i = 3; i >= 1; i--) {
+        [[NSColor colorWithSRGBRed:0.92 green:0.93 blue:1.0 alpha:0.035] set];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(moon.x - mr - i * 1.4, moon.y - mr - i * 1.4,
+                                                            2 * (mr + i * 1.4), 2 * (mr + i * 1.4))] fill];
+    }
+    [[NSColor colorWithSRGBRed:0.95 green:0.95 blue:1.0 alpha:0.9] set];
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(moon.x - mr, moon.y - mr, 2 * mr, 2 * mr)] fill];
+    [[NSColor colorWithSRGBRed:0.02 green:0.025 blue:0.07 alpha:1] set];
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(moon.x - mr + 1.9, moon.y - mr + 0.7, 2 * mr, 2 * mr)] fill];
+
+    // Meteor: a bright head with a tail that fades to nothing.
+    double hx, hy, tx, ty, fade;
+    if (NightSkyMeteor(_sky, &hx, &hy, &tx, &ty, &fade)) {
+        NSBezierPath *tail = [NSBezierPath bezierPath];
+        [tail moveToPoint:NSMakePoint(hx, hy)];
+        [tail lineToPoint:NSMakePoint(tx, ty)];
+        tail.lineCapStyle = NSLineCapStyleRound;
+        for (int k = 3; k >= 0; k--) {
+            tail.lineWidth = 0.7 + k * 0.9;
+            [[NSColor colorWithSRGBRed:0.85 green:0.92 blue:1.0 alpha:fade * (k == 0 ? 0.95 : 0.10)] set];
+            [tail stroke];
+        }
+        [[NSColor colorWithWhite:1 alpha:fade] set];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(hx - 1.1, hy - 1.1, 2.2, 2.2)] fill];
+    }
+
+    // Fade the sky out before the readout.
+    NSGradient *edge = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithWhite:0 alpha:0]
+                                                    endingColor:[NSColor colorWithWhite:0 alpha:1]];
+    [edge drawInRect:NSMakeRect(skyW - 46, 0, 46, kSceneH) angle:0];
+    [NSGraphicsContext restoreGraphicsState];
+}
+
 - (void)drawRect:(NSRect)dirty {
     [NSColor.clearColor set];
     NSRectFill(dirty);
+    [self drawNightSky];
 
     CGFloat midY = NSHeight(self.bounds) / 2.0;
 
