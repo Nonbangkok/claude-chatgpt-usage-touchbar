@@ -861,11 +861,18 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL rest
     NSRect sky = NSMakeRect(0, 0, skyW, kSceneH);
     [NSGraphicsContext saveGraphicsState];
     NSRectClip(sky);
-    // A flat night purple: one colour, so the stars and the mascots are the
-    // only things that read as light.
-    NSColor *purple = [NSColor colorWithSRGBRed:0.17 green:0.09 blue:0.30 alpha:1];
-    [purple set];
-    NSRectFill(sky);
+    // Deep night: near-black indigo at the top, a faint violet-blue glow at the
+    // horizon, as if a city were just over the edge of the bar.
+    NSGradient *night = [[NSGradient alloc] initWithColorsAndLocations:
+        [NSColor colorWithSRGBRed:0.015 green:0.020 blue:0.060 alpha:1], 0.0,
+        [NSColor colorWithSRGBRed:0.035 green:0.045 blue:0.120 alpha:1], 0.45,
+        [NSColor colorWithSRGBRed:0.10 green:0.075 blue:0.200 alpha:1], 0.86,
+        [NSColor colorWithSRGBRed:0.16 green:0.10 blue:0.22 alpha:1], 1.0, nil];
+    [night drawInRect:sky angle:270];
+    // A soft band of distant haze just above the ground line.
+    NSGradient *haze = [[NSGradient alloc] initWithStartingColor:[NSColor colorWithSRGBRed:0.30 green:0.22 blue:0.45 alpha:0.22]
+                                                    endingColor:[NSColor colorWithSRGBRed:0.30 green:0.22 blue:0.45 alpha:0]];
+    [haze drawInRect:NSMakeRect(0, 0.5, skyW, 7) angle:90];
 
     // Stars: far ones are cold pinpricks, near ones warmer and larger, with a
     // four-point glint on the brightest moments.
@@ -898,7 +905,7 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, CGFloat phase, BOOL rest
     }
     [[NSColor colorWithSRGBRed:0.95 green:0.95 blue:1.0 alpha:0.9] set];
     [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(moon.x - mr, moon.y - mr, 2 * mr, 2 * mr)] fill];
-    [purple set];
+    [[NSColor colorWithSRGBRed:0.02 green:0.025 blue:0.07 alpha:1] set];
     [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(moon.x - mr + 1.9, moon.y - mr + 0.7, 2 * mr, 2 * mr)] fill];
 
     // Meteor: a bright head with a tail that fades to nothing.
