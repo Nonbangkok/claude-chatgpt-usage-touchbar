@@ -29,9 +29,9 @@ int main(void) {
         Check(Count(stand, GPT_TOP, GPT_BOT, 0, GPT_N - 1, GPTInkBody) > 60, @"a solid body");
         Check(Count(stand, 6, 9, 6, 12, GPTInkGlow) == 5, @"the resting face is the five-cell >_ prompt");
         Check(Count(stand, 12, 14, 6, 12, GPTInkGlow) == 5, @"the chest wears the >_ glyph");
-        Check(stand[12 * GPT_N + 5] == GPTInkShade && stand[13 * GPT_N + 4] == GPTInkShade && stand[14 * GPT_N + 3] == GPTInkShade &&
-              stand[12 * GPT_N + 13] == GPTInkShade && stand[13 * GPT_N + 14] == GPTInkShade && stand[14 * GPT_N + 15] == GPTInkShade,
-              @"two arms spread diagonally out and down from the shoulders");
+        Check(Count(stand, 12, 13, 4, 5, GPTInkShade) == 4 && Count(stand, 12, 13, 13, 14, GPTInkShade) == 4 &&
+              Count(stand, 14, 14, 4, 5, GPTInkShade) == 0,
+              @"two 2x2 arms stick out from the sides of the body");
         Check(Count(stand, 16, 17, 6, 7, GPTInkBody) == 4 && Count(stand, 16, 17, 11, 12, GPTInkBody) == 4,
               @"standing: two full legs");
         // Symmetry of the body outside the face keeps the mirror flip honest.
