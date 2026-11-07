@@ -18,9 +18,9 @@ const unsigned char kGPTPalette[GPTInkCount][3] = {
 static const char *kBase[GPT_N] = {
     "....................",
     "....................",
-    ".....3..............",   // 2  antenna ball, glowing
-    ".....4.11111........",   // 3  antenna stem at the back of the head; crown
-    ".....111111111......",   // 4
+    "....3...............",   // 2  antenna ball, glowing
+    "....4..11111........",   // 3  antenna stem, two cells, at the back of the head
+    "....4111111111......",   // 4
     "....11111111111.....",   // 5
     "....11222222211.....",   // 6  visor
     "...1112222222111....",   // 7  side bumps

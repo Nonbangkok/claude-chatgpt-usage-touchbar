@@ -29,9 +29,9 @@ int main(void) {
         Check(Count(stand, GPT_TOP, GPT_BOT, 0, GPT_N - 1, GPTInkBody) > 60, @"a solid body");
         Check(Count(stand, 6, 9, 6, 12, GPTInkGlow) == 5, @"the resting face is the five-cell >_ prompt");
         Check(Count(stand, 12, 14, 6, 12, GPTInkGlow) == 5, @"the chest wears the >_ glyph");
-        Check(stand[3 * GPT_N + 5] == GPTInkShade && stand[2 * GPT_N + 5] == GPTInkGlow &&
-              Count(stand, 2, 2, 0, GPT_N - 1, GPTInkGlow) == 1,
-              @"a one-cell antenna at the back of the head with a glowing ball on top");
+        Check(stand[4 * GPT_N + 4] == GPTInkShade && stand[3 * GPT_N + 4] == GPTInkShade &&
+              stand[2 * GPT_N + 4] == GPTInkGlow && Count(stand, 2, 2, 0, GPT_N - 1, GPTInkGlow) == 1,
+              @"a two-cell antenna at the back of the head with a glowing ball on top");
         Check(Count(stand, 12, 13, 4, 5, GPTInkShade) == 4 && Count(stand, 12, 13, 13, 14, GPTInkShade) == 4 &&
               Count(stand, 14, 14, 4, 5, GPTInkShade) == 0,
               @"two 2x2 arms stick out from the sides of the body");
@@ -42,7 +42,7 @@ int main(void) {
         for (int r = GPT_TOP; r <= GPT_BOT; r++)
             for (int c = 0; c < GPT_N; c++) {
                 if (r >= 6 && r <= 9 && c >= 6 && c <= 12) continue;   // face region
-                if (r <= 3 && (c == 5 || c == 13)) continue;             // the antenna
+                if (r <= 4 && (c == 4 || c == 14)) continue;             // the antenna
                 unsigned char a = stand[r * GPT_N + c], b = stand[r * GPT_N + (18 - c)];
                 if (a == GPTInkGlow || b == GPTInkGlow) continue;       // the chest glyph
                 if (c <= 18 && a != b) symmetric = NO;
