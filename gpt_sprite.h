@@ -10,11 +10,11 @@
 #define GPT_BOT 17         // last occupied row (feet)
 
 // Palette indices used in the grid. 0 is transparent.
-enum { GPTInkNone = 0, GPTInkBody = 1, GPTInkVisor = 2, GPTInkGlow = 3, GPTInkShade = 4, GPTInkHighlight = 5, GPTInkDark = 6, GPTInkCount = 7 };
+enum { GPTInkNone = 0, GPTInkBody = 1, GPTInkVisor = 2, GPTInkGlow = 3, GPTInkShade = 4, GPTInkCount = 5 };
 extern const unsigned char kGPTPalette[GPTInkCount][3];
 
 typedef NS_ENUM(NSInteger, GPTFace) {
-    GPTFaceNormal,      // two big eyes
+    GPTFaceNormal,      // >_
     GPTFaceBlink,       // - -
     GPTFaceHappy,       // ^ ^  (tapped, cheered)
     GPTFaceSurprised,   // o o  (grabbed)
