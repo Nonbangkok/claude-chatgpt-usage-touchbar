@@ -92,34 +92,58 @@ check "valid resets_at -> a number" \
 # the five-hour gauge, which is misleading even though both values are valid.
 check_codex "classifies windows by duration" \
   '{"rate_limit":{"primary_window":{"used_percent":17,"reset_at":1893456000,"limit_window_seconds":18000},"secondary_window":{"used_percent":42,"reset_at":1894060800,"limit_window_seconds":604800}}}' \
-  "17 42 * * 7"
+  "17 42 * * 7 -"
 check_codex "weekly-only primary window" \
   '{"rate_limit":{"primary_window":{"used_percent":42,"reset_at":1894060800,"limit_window_seconds":604800},"secondary_window":null}}' \
-  "-1 42 -1 * 7"
+  "-1 42 -1 * 7 -"
 check_codex "rejects string percentages" \
   '{"rate_limit":{"primary_window":{"used_percent":"17","reset_at":1893456000,"limit_window_seconds":18000}}}' \
-  "-1 -1 -1 -1 7"
+  "-1 -1 -1 -1 7 -"
 
 # A free ChatGPT plan has one 30-day window and no 5h or weekly one. Its length
 # must reach the widget, which would otherwise label it "7d".
 check_codex "free plan: single 30-day window" \
   '{"rate_limit":{"primary_window":{"used_percent":12,"reset_at":1893456000,"limit_window_seconds":2592000},"secondary_window":null}}' \
-  "-1 12 -1 * 30"
+  "-1 12 -1 * 30 -"
 check_codex "unknown duration on the secondary window defaults to 7 days" \
   '{"rate_limit":{"primary_window":{"used_percent":5,"reset_at":1893456000,"limit_window_seconds":18000},"secondary_window":{"used_percent":9,"reset_at":1894060800}}}' \
-  "5 9 * * 7"
+  "5 9 * * 7 -"
 check_codex "implausible duration is clamped" \
   '{"rate_limit":{"primary_window":{"used_percent":3,"reset_at":1893456000,"limit_window_seconds":999999999999}}}' \
-  "-1 3 -1 * 3650"
+  "-1 3 -1 * 3650 -"
 check_codex "malformed rate_limit reports no windows" \
   '{"rate_limit":null}' \
-  "-1 -1 -1 -1 7"
+  "-1 -1 -1 -1 7 -"
+
+# The subscription level comes from plan_type. It is a label shown on the bar,
+# so anything outside a safe charset is stripped and non-strings are unknown.
+check_codex "plan_type is carried through" \
+  '{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":5,"reset_at":1893456000,"limit_window_seconds":18000}}}' \
+  "5 -1 * -1 7 plus"
+check_codex "plan_type is lower-cased and sanitised" \
+  '{"plan_type":"Pro Lite; rm -rf /","rate_limit":{"primary_window":{"used_percent":5,"reset_at":1893456000,"limit_window_seconds":18000}}}' \
+  "5 -1 * -1 7 proliterm-rf"
+check_codex "non-string plan_type is unknown" \
+  '{"plan_type":["pro"],"rate_limit":{"primary_window":{"used_percent":5,"reset_at":1893456000,"limit_window_seconds":18000}}}' \
+  "5 -1 * -1 7 -"
+check_codex "overlong plan_type is truncated to 24" \
+  '{"plan_type":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rate_limit":{"primary_window":{"used_percent":5,"reset_at":1893456000,"limit_window_seconds":18000}}}' \
+  "5 -1 * -1 7 aaaaaaaaaaaaaaaaaaaaaaaa"
 
 # Malformed input must produce nothing at all, which the caller treats as stale
 # — printing a partial line would be read as a live measurement.
 got=$(printf 'not json' | "$PY" -c "$SRC" 2>/dev/null)
 if [ -z "$got" ]; then pass=$((pass+1)); echo "  ok    malformed JSON prints nothing"
 else fail=$((fail+1)); echo "  FAIL  malformed JSON printed [$got]"; fi
+
+# Each parser lives inside a bash '...' string, so a stray single quote ends it
+# early and the parser silently prints nothing (the provider then reads as
+# "none"). bash -n cannot see this, so check it explicitly.
+for block in "$SRC" "$SRC_CODEX"; do
+  if printf '%s' "$block" | grep -q "'"; then
+    fail=$((fail+1)); echo "  FAIL  a parser block contains a single quote"
+  else pass=$((pass+1)); echo "  ok    parser block is free of single quotes"; fi
+done
 
 echo
 echo "shell:"

@@ -10,7 +10,10 @@ headless. No screen was filmed. The animation uses illustrative sample data.*
 
 The bars show Claude Code and Codex 5-hour and 7-day utilisation. A window
 appears only if the account has one: Claude Max 20x has no 5-hour limit, so it
-shows just the weekly bar, and the remaining bars grow to fill the space. When
+shows just the weekly bar, and the remaining bars grow to fill the space.
+Each provider's subscription level (`Claude Max 20x · 7d`, `GPT Free · 30d`) is
+printed beside its name when the cell is wide enough to hold it; with four
+narrow cells it is left off the bars and shown in the lens instead. When
 both are visible, their labels read `Claude 5h`, `Claude 7d`, `GPT 5h`, and
 `GPT 7d`; a single provider uses its full name. Tick marks sit at
 50% and 90%; colour and a `!` glyph both flag trouble, so the warning survives

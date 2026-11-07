@@ -96,12 +96,16 @@ Two files, both mode `0600`, in a private `0700` directory
 values:
 
 ```
-usage        <5h%> <7d%> <5hResetMin> <7dResetMin> <scoped%> <model> <unixTimestamp>   (Claude)
-codex-usage  <5h%> <7d%> <5hResetMin> <7dResetMin> <longWindowDays> <unixTimestamp>  (Codex)
+usage        <5h%> <7d%> <5hResetMin> <7dResetMin> <scoped%> <model> <plan> <unixTimestamp>   (Claude)
+codex-usage  <5h%> <7d%> <5hResetMin> <7dResetMin> <longWindowDays> <plan> <unixTimestamp>  (Codex)
 ```
 
-Percentages, reset times, the long window's length in days (1–3650), a sanitized model name (`[A-Za-z0-9_.-]`, at most 64
-characters) and a timestamp. No token, account ID, or other identifier is
+Percentages, reset times, the long window's length in days (1–3650), a sanitized model name
+and subscription level such as `max_20x` or `free` (`[A-Za-z0-9_.-]`, at most 64 and 24
+characters respectively) and a timestamp. The subscription level is read from
+`subscriptionType`/`rateLimitTier` in the Claude credential already being used and from
+`plan_type` in the Codex usage response; it is a label, not an identifier, and is
+stripped to that charset before it can reach the cache or the widget. No token, account ID, or other identifier is
 cached. Delete either file whenever you like; it is rebuilt within a minute.
 
 The old shared `/tmp/.claude-usage-$UID` and `/tmp/.codex-usage-$UID` files are

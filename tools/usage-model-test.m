@@ -44,6 +44,21 @@ int main(void) {
         require(ParseUsageRecord(@"codex 18 42 44 6150 0 ok 0") == nil,
                 @"an out-of-range window length rejects the record");
 
+        usage = ParseUsageRecord(@"claude 37 53 -1 100 0 ok 7 max_20x");
+        require([usage.plan isEqualToString:@"max_20x"], @"the plan token is preserved");
+        require([UsagePlanDisplay(usage.plan) isEqualToString:@"Max 20x"],
+                @"max_20x is shown as Max 20x, not Max 20X");
+        require([UsagePlanDisplay(@"free") isEqualToString:@"Free"] &&
+                [UsagePlanDisplay(@"plus") isEqualToString:@"Plus"] &&
+                [UsagePlanDisplay(@"pro") isEqualToString:@"Pro"],
+                @"simple plans are capitalised");
+        require(UsagePlanDisplay(@"-") == nil && UsagePlanDisplay(@"") == nil && UsagePlanDisplay(nil) == nil,
+                @"an unknown plan shows nothing");
+        usage = ParseUsageRecord(@"codex 18 42 44 6150 0 ok");
+        require(usage.plan == nil, @"a record without a plan has none");
+        require(ParseUsageRecord(@"codex 1 2 3 4 5 ok 7 bad/plan") == nil,
+                @"an unsafe plan rejects the record");
+
         require(ParseUsageRecord(@"unknown 99 99 0 0 ok") == nil,
                 @"unknown providers are rejected");
         require(usage.p5 == 18 && usage.p7 == 42,

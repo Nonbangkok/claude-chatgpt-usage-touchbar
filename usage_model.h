@@ -9,6 +9,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) int p7;
 @property (nonatomic) int resetMin;
 @property (nonatomic) int reset7dMin;
+@property (nonatomic, copy) NSString *plan;   // subscription level token ("max_20x"), nil if unknown
 @property (nonatomic) int longDays;   // length of the long window: 7, or e.g. 30 on a free plan
 @property (nonatomic) int ageSec;
 @property (nonatomic, copy) NSString *state;
@@ -22,6 +23,7 @@ FOUNDATION_EXPORT NSArray<NSString *> *VisibleUsageProviderNames(UsageProvider *
 FOUNDATION_EXPORT UsageProvider *DemoUsageProvider(NSString *name);
 FOUNDATION_EXPORT NSString *UsageResetDisplay(int resetMin);
 FOUNDATION_EXPORT NSString *UsagePeriodLabel(int days);
+FOUNDATION_EXPORT NSString * _Nullable UsagePlanDisplay(NSString * _Nullable plan);
 
 typedef NS_ENUM(NSInteger, UsageRemainingLevel) {
     UsageRemainingLevelNormal,

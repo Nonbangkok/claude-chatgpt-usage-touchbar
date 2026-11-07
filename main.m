@@ -127,6 +127,7 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
 
 @interface PetView : NSView
 @property (nonatomic) int p5, p7, resetMin, reset7dMin, ageSec, scopedPct, longDays, codexLongDays;
+@property (nonatomic, copy) NSString *plan, *codexPlan;   // subscription level tokens, nil if unknown
 @property (nonatomic, copy) NSString *scopedName;   // per-model weekly cap (e.g. Fable)
 @property (nonatomic, copy) NSString *state;   // ok | stale | expired | none
 @property (nonatomic) int codexP5, codexP7, codexResetMin, codexReset7dMin, codexAgeSec;
@@ -761,27 +762,38 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     // a free ChatGPT plan has neither a 5h nor a weekly one — so an empty gauge
     // there is noise. A provider that is expired or has no data keeps both
     // placeholder cells, because then we simply do not know what it has.
-    void (^addProvider)(NSString *, NSString *, BOOL, NSString *, int, int, int, int, int) =
+    void (^addProvider)(NSString *, NSString *, BOOL, NSString *, int, int, int, int, int, NSString *) =
         ^(NSString *name, NSString *provider, BOOL ready, NSString *providerState,
-          int p5, int p7, int reset5, int reset7, int longDays) {
+          int p5, int p7, int reset5, int reset7, int longDays, NSString *planToken) {
+            // "Claude Max 20x · 7d": the same label with the subscription level
+            // after the name. Only a live provider shows it; login/stale/none
+            // labels already say something more urgent.
+            NSString *planName = UsagePlanDisplay(planToken);
+            NSString *(^planned)(NSString *) = ^NSString *(NSString *period) {
+                if (!ready || !planName || ![providerState isEqualToString:@"ok"])
+                    return usageLabel(name, period, providerState);
+                return [NSString stringWithFormat:@"%@ %@ · %@", name, planName, period];
+            };
             BOOL has5 = !ready || p5 >= 0;
             BOOL has7 = !ready || p7 >= 0;
             if (has5)
                 [cells addObject:@[usageLabel(name, @"5h", providerState),
-                                   @(ready ? p5 : -1), providerState, @(reset5), provider]];
+                                   @(ready ? p5 : -1), providerState, @(reset5), provider, planned(@"5h")]];
             if (has7)
                 [cells addObject:@[usageLabel(name, UsagePeriodLabel(longDays), providerState),
-                                   @(ready ? p7 : -1), providerState, @(reset7), provider]];
+                                   @(ready ? p7 : -1), providerState, @(reset7), provider,
+                                   planned(UsagePeriodLabel(longDays))]];
             if (!has5 && !has7)   // live but reporting nothing: one honest placeholder
-                [cells addObject:@[[name stringByAppendingString:@" —"], @-1, providerState, @-1, provider]];
+                [cells addObject:@[[name stringByAppendingString:@" —"], @-1, providerState, @-1, provider,
+                                   [name stringByAppendingString:@" —"]]];
         };
     if ([visible containsObject:@"claude"])
         addProvider(claudeName, @"claude", claudeReady, self.state,
-                    self.p5, self.p7, self.resetMin, self.reset7dMin, self.longDays);
+                    self.p5, self.p7, self.resetMin, self.reset7dMin, self.longDays, self.plan);
     if ([visible containsObject:@"codex"])
         addProvider(codexName, @"codex", codexReady, self.codexState,
                     self.codexP5, self.codexP7, self.codexResetMin, self.codexReset7dMin,
-                    self.codexLongDays);
+                    self.codexLongDays, self.codexPlan);
 
     return cells;
 }
@@ -794,12 +806,30 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
         [self.lens cancel]; self.lensCell = nil;
     }
     CGFloat cellW = (READ_W - CELL_GAP * (cells.count - 1)) / cells.count;
+
+    // Show the subscription level in a provider's labels only if it fits in
+    // every one of that provider's cells, beside the widest figure. Decided per
+    // provider so its cells never disagree; the lens always carries it.
+    NSMutableSet<NSString *> *roomForPlan = [NSMutableSet set];
+    NSMutableSet<NSString *> *noRoom = [NSMutableSet set];
+    NSDictionary *labelAt = @{ NSFontAttributeName: [NSFont systemFontOfSize:10 weight:NSFontWeightSemibold] };
+    CGFloat figureW = [@"100%" sizeWithAttributes:@{
+        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:13 weight:NSFontWeightBold] }].width;
+    for (NSArray *cell in cells) {
+        NSString *provider = cell[4];
+        if (cellW < 82 || [cell[5] length] == 0 ||
+            [cell[5] sizeWithAttributes:labelAt].width + figureW + 6 > cellW)
+            [noRoom addObject:provider];
+        else [roomForPlan addObject:provider];
+    }
     for (NSInteger i = 0; i < cells.count; i++) {
         NSString *providerState = cells[i][2];
+        NSString *shown = ([roomForPlan containsObject:cells[i][4]] && ![noRoom containsObject:cells[i][4]])
+            ? cells[i][5] : cells[i][0];
         CGFloat dim = [providerState isEqualToString:@"stale"] ? 0.72 : 1.0;
         BOOL selected = self.usageTapT > 0 && self.activeUsageCell == i;
-        NSString *label = selected ? UsageResetDisplay([cells[i][3] intValue]) : cells[i][0];
-        [self drawCell:cells[i][0] pct:[cells[i][1] intValue] provider:cells[i][4]
+        NSString *label = selected ? UsageResetDisplay([cells[i][3] intValue]) : shown;
+        [self drawCell:shown pct:[cells[i][1] intValue] provider:cells[i][4]
                      x:READ_X + i * (cellW + CELL_GAP) width:cellW dim:dim
                   effect:(selected ? self.usageTapT / 2.5 : 0) resetLabel:label];
         int reset = [cells[i][3] intValue];
@@ -919,7 +949,7 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
     BOOL textRight = cx < READ_X + READ_W / 2;
     CGFloat textX = textRight ? cx + r + stretch + 12 : READ_X + 9;
     CGFloat textW = textRight ? READ_X + READ_W - 6 - textX : cx - r - stretch - 12 - textX;
-    NSString *title = [NSString stringWithFormat:@"%@ · %d%% left", self.lensCell[0], remaining];
+    NSString *title = [NSString stringWithFormat:@"%@ · %d%% left", self.lensCell[5], remaining];
     int reset = self.lensResetDate ? MAX(0, (int)ceil([self.lensResetDate timeIntervalSinceNow] / 60)) : -1;
     NSString *detail = self.lensResetDate ? [@"resets in " stringByAppendingString:[UsageResetDisplay(reset) substringFromIndex:2]] : @"reset time unavailable";
     if (l.holding && self.lensResetDate) {
@@ -1448,6 +1478,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
                 self.pet.resetMin = claude.resetMin;
                 self.pet.reset7dMin = claude.reset7dMin;
                 self.pet.longDays = claude.longDays;
+                self.pet.plan = claude.plan;
                 self.pet.ageSec = claude.ageSec;
                 self.pet.state = claude.state;
             }
@@ -1457,6 +1488,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
                 self.pet.codexResetMin = codex.resetMin;
                 self.pet.codexReset7dMin = codex.reset7dMin;
                 self.pet.codexLongDays = codex.longDays;
+                self.pet.codexPlan = codex.plan;
                 self.pet.codexAgeSec = codex.ageSec;
                 self.pet.codexState = codex.state;
                 self.pet.codexHaveData = codex.available;
@@ -1492,6 +1524,9 @@ static int RenderStates(NSString *dir) {
         @"11-codex-expired": @[@26, @91, @125, @"ok", @0, @"", @0, @0, @-1, @"expired"],
         @"13-no-5h-either": @[@-1, @41, @-1, @"ok", @0, @"", @-1, @0, @-1, @"ok"],
         @"15-free-chatgpt-30d": @[@-1, @41, @-1, @"ok", @0, @"", @-1, @12, @-1, @"ok", @30],
+        @"18-plans-two-cells": @[@-1, @53, @-1, @"ok", @0, @"", @-1, @100, @-1, @"ok", @30, @"max_20x", @"free"],
+        @"19-plans-three-cells": @[@-1, @53, @-1, @"ok", @0, @"", @18, @42, @44, @"ok", @7, @"max_20x", @"plus"],
+        @"20-plans-four-cells": @[@26, @91, @125, @"ok", @0, @"", @18, @42, @44, @"ok", @7, @"pro", @"plus"],
         @"14-claude-no-5h": @[@-1, @41, @-1, @"ok", @0, @"", @18, @42, @44, @"ok"],
         @"12-claude-none": @[@0, @0, @-1, @"none", @0, @"", @18, @42, @44, @"ok"],
     };
@@ -1508,6 +1543,7 @@ static int RenderStates(NSString *dir) {
             v.codexResetMin = [s[8] intValue]; v.codexState = s[9];
             v.codexAgeSec = 300;
             if (s.count >= 11) v.codexLongDays = [s[10] intValue];
+            if (s.count >= 13) { v.plan = s[11]; v.codexPlan = s[12]; }
             v.codexHaveData = ![v.codexState isEqualToString:@"none"] &&
                                ![v.codexState isEqualToString:@"expired"];
         }

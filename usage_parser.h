@@ -3,10 +3,13 @@
 // so both login banners and trailing shell diagnostics can be ignored.
 //
 // Protocol: one record per provider, six fields after the provider name:
-//   "<claude|codex> <5h%> <7d%> <5hResetMin> <7dResetMin> <ageSec> <state> [longDays]"
+//   "<claude|codex> <5h%> <7d%> <5hResetMin> <7dResetMin> <ageSec> <state> [longDays] [plan]"
 // longDays (1...3650, default 7) is the length of the long window, e.g. 30 for
-// a free ChatGPT plan. The newest valid record of each provider wins; anything
-// else is noise.
+// a free ChatGPT plan. plan is the subscription level (max_20x, pro, free...)
+// in [A-Za-z0-9_.-], at most 24 chars; "-" or absent means unknown. Either
+// optional token may be omitted, but not reordered: longDays is numeric and
+// plan always starts with a letter, so a lone token is unambiguous. The newest
+// valid record of each provider wins; anything else is noise.
 #pragma once
 #include <limits.h>
 #include <stddef.h>
@@ -17,6 +20,7 @@ typedef enum { UsageProviderClaude = 0, UsageProviderCodex = 1 } UsageProviderID
 typedef struct {
     int p5, p7, resetMin, reset7dMin, ageSec, longDays;
     char state[8];
+    char plan[25];                      // "" when unknown
 } UsageReading;
 
 typedef struct {
@@ -54,17 +58,17 @@ static inline int UsageInteger(UsageToken token, int maximum, int *result) {
 static inline int ParseUsageLine(const char *text, size_t length,
                           UsageProviderID *provider, UsageReading *out) {
     if (!text || !provider || !out || length == 0 || length > 512) return 0;
-    UsageToken fields[9];
+    UsageToken fields[10];
     size_t count = 0, i = 0;
     while (i < length) {
         while (i < length && (text[i] == ' ' || text[i] == '\t')) ++i;
         if (i == length) break;
-        if (count == 9) return 0;
+        if (count == 10) return 0;
         size_t start = i;
         while (i < length && text[i] != ' ' && text[i] != '\t') ++i;
         fields[count++] = (UsageToken){text + start, i - start};
     }
-    if (count != 7 && count != 8) return 0;
+    if (count < 7 || count > 9) return 0;
 
     UsageProviderID id;
     if (UsageTokenEquals(fields[0], "claude")) id = UsageProviderClaude;
@@ -84,8 +88,28 @@ static inline int ParseUsageLine(const char *text, size_t length,
     if (!(UsageTokenEquals(fields[6], "ok") || UsageTokenEquals(fields[6], "stale") ||
           UsageTokenEquals(fields[6], "expired") || UsageTokenEquals(fields[6], "none"))) return 0;
     memcpy(candidate.state, fields[6].text, fields[6].length);
-    if (count == 8 && (!UsageInteger(fields[7], 3650, &candidate.longDays) ||
-                       candidate.longDays < 1)) return 0;
+    size_t next = 7;
+    if (next < count && fields[next].length && fields[next].text[0] >= '0' &&
+        fields[next].text[0] <= '9') {
+        if (!UsageInteger(fields[next], 3650, &candidate.longDays) ||
+            candidate.longDays < 1) return 0;
+        ++next;
+    }
+    if (next < count) {
+        UsageToken plan = fields[next];
+        if (next + 1 != count) return 0;           /* nothing may follow the plan */
+        if (!UsageTokenEquals(plan, "-")) {
+            if (plan.length == 0 || plan.length > 24) return 0;
+            for (size_t j = 0; j < plan.length; ++j) {
+                unsigned char c = (unsigned char)plan.text[j];
+                int alpha = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+                if (j == 0 ? !alpha
+                           : !(alpha || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-'))
+                    return 0;
+            }
+            memcpy(candidate.plan, plan.text, plan.length);
+        }
+    }
     *provider = id;
     *out = candidate;
     return 1;

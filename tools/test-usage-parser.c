@@ -29,6 +29,12 @@ static void expect_days(const UsageOutput *out, UsageProviderID provider, int da
     checks++;
 }
 
+static void expect_plan(const UsageOutput *out, UsageProviderID provider, const char *plan) {
+    assert(out->valid[provider] == 1);
+    assert(strcmp(out->reading[provider].plan, plan) == 0);
+    checks++;
+}
+
 /* Parses `text`, requiring exactly `found` providers. */
 static UsageOutput parse(const char *text, size_t length, int found) {
     UsageOutput out;
@@ -90,10 +96,35 @@ int main(void) {
         const char *claude_days = "claude 1 2 3 4 5 ok 7\n";
         out = parse(claude_days, strlen(claude_days), 1);
         expect_days(&out, UsageProviderClaude, 7);
+        /* Subscription level: the optional token after longDays. */
+        const char *with_plan = "claude 37 8 -1 100 0 ok 7 max_20x\ncodex -1 12 -1 43200 0 ok 30 free\n";
+        out = parse(with_plan, strlen(with_plan), 2);
+        expect_plan(&out, UsageProviderClaude, "max_20x"); expect_days(&out, UsageProviderClaude, 7);
+        expect_plan(&out, UsageProviderCodex, "free");     expect_days(&out, UsageProviderCodex, 30);
+        const char *unknown = "claude 37 8 20 100 0 ok 7 -\n";
+        out = parse(unknown, strlen(unknown), 1);
+        expect_plan(&out, UsageProviderClaude, "");                /* "-" is unknown */
+        out = parse(no_days, strlen(no_days), 1);
+        expect_plan(&out, UsageProviderCodex, "");                 /* absent is unknown */
+        const char *plan_only = "codex 18 42 44 5000 0 ok plus\n";
+        out = parse(plan_only, strlen(plan_only), 1);              /* days omitted, plan kept */
+        expect_plan(&out, UsageProviderCodex, "plus"); expect_days(&out, UsageProviderCodex, 7);
+        char longest[64];
+        snprintf(longest, sizeof(longest), "codex 1 2 3 4 5 ok 7 %s\n", "a123456789b123456789c123");
+        out = parse(longest, strlen(longest), 1);
+        expect_plan(&out, UsageProviderCodex, "a123456789b123456789c123");   /* 24 chars */
+        /* Anything wrong with the plan invalidates the whole record. */
+        bad("codex 1 2 3 4 5 ok 7 a123456789b123456789c1234\n");   /* 25 chars */
+        bad("codex 1 2 3 4 5 ok 7 pl/us\n"); bad("codex 1 2 3 4 5 ok 7 pl;us\n");
+        bad("codex 1 2 3 4 5 ok 7 9plus\n"); bad("codex 1 2 3 4 5 ok 7 _plus\n");
+        bad("codex 1 2 3 4 5 ok 7 -plus\n"); bad("codex 1 2 3 4 5 ok 7 pl\xc3\xa9\n");
+        bad("codex 1 2 3 4 5 ok 7 plus extra\n"); bad("codex 1 2 3 4 5 ok plus 7\n");
+        bad("codex 1 2 3 4 5 ok 7 plus 7 plus\n"); bad("codex 1 2 3 4 5 ok plus extra\n");
+        bad("codex 1 2 3 4 5 ok 7 $(touch${IFS}/tmp/x)\n");
         /* An invalid days token invalidates the whole line, never half of it. */
         bad("codex 1 2 3 4 5 ok 0\n"); bad("codex 1 2 3 4 5 ok 3651\n");
         bad("codex 1 2 3 4 5 ok -1\n"); bad("codex 1 2 3 4 5 ok 7d\n");
-        bad("codex 1 2 3 4 5 ok 30 extra\n"); bad("codex 1 2 3 4 5 ok 99999999999\n");
+        bad("codex 1 2 3 4 5 ok 30 extra more\n"); bad("codex 1 2 3 4 5 ok 99999999999\n");
         bad("codex 1 2 3 4 5 ok a[$(touch${IFS}/tmp/x)]\n");
     }
     good_claude("claude 0 0 -1 -1 -1 expired\n", 0, 0, -1, -1, -1, "expired");
@@ -114,7 +145,8 @@ int main(void) {
     bad(""); bad("\n\r\n \t\n"); bad("noise only\n");
     bad("claude 37 8 20 100 0\n");                    /* missing state */
     bad("claude 37 8 20 0 ok\n");                     /* old six-field shape */
-    bad("claude 37 8 20 100 0 ok extra\n");
+    bad("claude 37 8 20 100 0 ok 7 extra more\n");     /* two trailing words are the limit */
+    good_claude("claude 37 8 20 100 0 ok extra\n", 37, 8, 20, 100, 0, "ok");  /* a lone word is a plan */
     bad("claude 37 8 20 100 0 okay\n"); bad("claude 37 8 20 100 0 OK\n");
     bad("claude 37 8 20 100 0 unknown\n"); bad("claude 37 8 20 100 0 okkkkkkk\n");
     bad("gemini 37 8 20 100 0 ok\n"); bad("Claude 37 8 20 100 0 ok\n");
@@ -218,6 +250,7 @@ int main(void) {
                 assert(r->reset7dMin >= -1 && r->reset7dMin <= 525600);
                 assert(r->ageSec >= -1);
                 assert(r->longDays >= 1 && r->longDays <= 3650);
+                assert(memchr(r->plan, 0, sizeof(r->plan)) != NULL);
                 assert(memchr(r->state, 0, sizeof(r->state)) != NULL);
             }
         }

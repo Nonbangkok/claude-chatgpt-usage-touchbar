@@ -12,6 +12,7 @@ UsageProvider *UsageProviderFromReading(UsageProviderID provider, const UsageRea
     usage.resetMin = reading->resetMin;
     usage.reset7dMin = reading->reset7dMin;
     usage.longDays = reading->longDays;
+    usage.plan = reading->plan[0] ? [NSString stringWithUTF8String:reading->plan] : nil;
     usage.ageSec = reading->ageSec;
     usage.state = [NSString stringWithUTF8String:reading->state];
     usage.available = strcmp(reading->state, "none") != 0 && strcmp(reading->state, "expired") != 0;
@@ -88,4 +89,12 @@ UsageRemainingLevel UsageRemainingLevelForUsedPercent(int usedPercent) {
 
 NSString *UsagePeriodLabel(int days) {
     return [NSString stringWithFormat:@"%dd", days >= 1 ? days : 7];
+}
+
+NSString *UsagePlanDisplay(NSString *plan) {
+    if (plan.length == 0 || [plan isEqualToString:@"-"]) return nil;
+    NSString *spaced = [plan stringByReplacingOccurrencesOfString:@"_" withString:@" "];
+    // Only the first letter: "max 20x" -> "Max 20x" (capitalizedString would
+    // turn it into "Max 20X").
+    return [[[spaced substringToIndex:1] uppercaseString] stringByAppendingString:[spaced substringFromIndex:1]];
 }

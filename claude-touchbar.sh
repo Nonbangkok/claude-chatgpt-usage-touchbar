@@ -2,9 +2,10 @@
 # Claude usage for the Touch Bar widget.
 #
 # --raw prints one record per provider:
-#   "claude|codex <5h%> <7d%> <5hResetMin> <7dResetMin> <ageSec> <state> [longDays]"
+#   "claude|codex <5h%> <7d%> <5hResetMin> <7dResetMin> <ageSec> <state> <longDays> <plan>"
 # longDays is the length of the long window (7 unless the plan differs, e.g. a
-# free ChatGPT plan's single 30-day window); it is omitted for Claude.
+# free ChatGPT plan's single 30-day window); plan is the subscription level
+# (max_20x, pro, plus, free, ...) or "-" when unknown.
 #   state: ok      — fresh reading from the API
 #          stale   — API unreachable, showing the last good numbers
 #          expired — the OAuth token has expired; run `claude -p hi` to refresh
@@ -29,7 +30,7 @@ TTL=60
 # version pointed at a hard-coded nvm path, which worked on exactly one machine.
 PY=/usr/bin/python3
 [ -x "$PY" ] || PY=$(command -v python3) || {
-  printf 'claude 0 0 -1 -1 -1 none\ncodex 0 0 -1 -1 -1 none\n'; exit 0; }
+  printf 'claude 0 0 -1 -1 -1 none 7 -\ncodex 0 0 -1 -1 -1 none 7 -\n'; exit 0; }
 
 # Open paths relative to verified directory descriptors. O_NOFOLLOW rejects
 # symlinks; O_NONBLOCK prevents a planted FIFO from hanging the poller. This
@@ -39,15 +40,19 @@ cache_io() {
   "$PY" - "$1" "$2" "${3:-}" <<'PY_CACHE'
 import os, re, stat, sys, time, uuid
 
-# name -> (field count, (low, high) per numeric field, index of the model name
-# or None, index of the timestamp). Only these two files can ever be touched.
+# name -> (field count, (low, high) per leading numeric field, max length of
+# each following text field, in order; the timestamp is always the last field).
+# Only these two files can ever be touched. Text fields are a restricted
+# charset and never contain whitespace; "-" means "unknown".
 SCHEMAS = {
-    "usage": (7, [(-1, 100), (-1, 100), (-1, 525600), (-1, 525600), (-1, 100)], 5, 6),
-    "codex-usage": (6, [(-1, 100), (-1, 100), (-1, 525600), (-1, 525600), (1, 3650)], None, 5),
+    # p5 p7 5hReset 7dReset scoped% model plan epoch
+    "usage": (8, [(-1, 100), (-1, 100), (-1, 525600), (-1, 525600), (-1, 100)], [64, 24]),
+    # p5 p7 5hReset 7dReset longWindowDays plan epoch
+    "codex-usage": (7, [(-1, 100), (-1, 100), (-1, 525600), (-1, 525600), (1, 3650)], [24]),
 }
 
 def record(schema, text):
-    count, ranges, name_index, stamp_index = schema
+    count, ranges, text_limits = schema
     fields = text.split()
     if len(fields) != count:
         raise ValueError("invalid field count")
@@ -59,13 +64,14 @@ def record(schema, text):
         if not low <= value <= high:
             raise ValueError("number out of range")
         values.append(str(value))
-    if name_index is not None:
-        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", fields[name_index]):
-            raise ValueError("invalid model name")
-        values.append(fields[name_index])
-    if not re.fullmatch(r"[0-9]{1,10}", fields[stamp_index]):
+    for offset, limit in enumerate(text_limits):
+        value = fields[len(ranges) + offset]
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,%d}" % limit, value):
+            raise ValueError("invalid text field")
+        values.append(value)
+    if not re.fullmatch(r"[0-9]{1,10}", fields[-1]):
         raise ValueError("invalid timestamp")
-    stamp = int(fields[stamp_index], 10)
+    stamp = int(fields[-1], 10)
     if not 0 < stamp <= int(time.time()) + 5:
         raise ValueError("timestamp out of range")
     return " ".join(values + [str(stamp)])
@@ -115,13 +121,13 @@ except (KeyError, OSError, ValueError, UnicodeError):
 PY_CACHE
 }
 
-read_cache() {                          # -> P5 P7 RESET RESET7 SP SN STAMP
+read_cache() {                          # -> P5 P7 RESET RESET7 SP SN PLAN STAMP
   local validated
   validated=$(cache_io read usage) || return 1
-  read -r P5 P7 RESET RESET7 SP SN STAMP <<< "$validated"
+  read -r P5 P7 RESET RESET7 SP SN PLAN STAMP <<< "$validated"
 }
 
-P5=; P7=; RESET=-1; RESET7=-1; SP=-1; SN=-; STAMP=0
+P5=; P7=; RESET=-1; RESET7=-1; SP=-1; SN=-; PLAN=-; STAMP=0
 read_cache || :
 AGE=$(( $(date +%s) - ${STAMP:-0} ))
 
@@ -141,6 +147,17 @@ except Exception: print("1")')
     tok=$(printf '%s' "$cred" | "$PY" -c 'import json,sys
 try: sys.stdout.write(json.load(sys.stdin)["claudeAiOauth"]["accessToken"])
 except Exception: pass')
+    # Subscription level, e.g. max_20x / pro / team. It is a label, not a
+    # secret, and is restricted to a safe charset before it can be cached.
+    newplan=$(printf '%s' "$cred" | "$PY" -c 'import json,re,sys
+try:
+    o = json.load(sys.stdin)["claudeAiOauth"]
+    sub = str(o.get("subscriptionType") or "").lower()
+    m = re.search(r"([0-9]+)x", str(o.get("rateLimitTier") or ""))
+    plan = "max_%sx" % m.group(1) if sub == "max" and m else sub
+    print(re.sub(r"[^a-z0-9_.-]", "", plan)[:24] or "-")
+except Exception:
+    print("-")')
     unset cred
 
     # -w '%{http_code}' so a 401 is never silently parsed as "no data".
@@ -195,8 +212,8 @@ r7 = reset_min(j.get("seven_day"))
 print(f"{p5} {p7} {r5} {r7} {sp} {sn}")')
       case "$parsed" in
         ''|-1\ -1\ *) state=stale ;;
-        *) if validated=$(cache_io write usage "$parsed $(date +%s)"); then
-             read -r P5 P7 RESET RESET7 SP SN STAMP <<< "$validated"
+        *) if validated=$(cache_io write usage "$parsed ${newplan:--} $(date +%s)"); then
+             read -r P5 P7 RESET RESET7 SP SN PLAN STAMP <<< "$validated"
              AGE=0; state=ok
            else
              state=stale
@@ -212,7 +229,7 @@ fi
 # being read. `none` is more useful than a fabricated zero when this is a first
 # run; `expired` still wins because it gives the user an actionable cause.
 if [ -z "${P5:-}" ]; then
-  P5=0; P7=0; RESET=-1; RESET7=-1; AGE=-1
+  P5=0; P7=0; RESET=-1; RESET7=-1; PLAN=-; AGE=-1
   [ "$state" = expired ] || state=none
 elif [ "$state" != ok ]; then
   AGE=$(( $(date +%s) - ${STAMP:-0} ))
@@ -221,11 +238,11 @@ fi
 # Codex uses the ChatGPT plan token created by the Codex CLI. The usage endpoint
 # is undocumented, so everything below is deliberately defensive: a schema
 # change leaves this provider stale/none rather than inventing a percentage.
-# Cache record (`codex-usage`): "5h 7d 5hReset 7dReset longWindowDays epoch"
+# Cache record (`codex-usage`): "5h 7d 5hReset 7dReset longWindowDays plan epoch"
 CTTL=60
-CP5=; CP7=; CRESET=-1; CRESET7=-1; CDAYS=7; CSTAMP=0; CAGE=-1; cstate=ok
+CP5=; CP7=; CRESET=-1; CRESET7=-1; CDAYS=7; CPLAN=-; CSTAMP=0; CAGE=-1; cstate=ok
 if cvalidated=$(cache_io read codex-usage); then
-  read -r CP5 CP7 CRESET CRESET7 CDAYS CSTAMP <<< "$cvalidated"
+  read -r CP5 CP7 CRESET CRESET7 CDAYS CPLAN CSTAMP <<< "$cvalidated"
 fi
 CAGE=$(( $(date +%s) - ${CSTAMP:-0} ))
 
@@ -270,13 +287,13 @@ except Exception:
     elif [ "$ccode" = 200 ]; then
       cparsed=$(printf '%s' "$cresp" | sed '$d' | "$PY" -c '
 # CODEX_PARSER_BEGIN
-import json, sys, time
+import json, re, sys, time
 try: j = json.load(sys.stdin)
 except Exception: sys.exit(0)
 
 rate_limit = j.get("rate_limit")
 if not isinstance(rate_limit, dict):
-    print("-1 -1 -1 -1 7"); sys.exit(0)
+    print("-1 -1 -1 -1 7 -"); sys.exit(0)
 
 p5 = p7 = reset5 = reset7 = -1
 days = 7    # length of the long window; free plans have a single 30-day one
@@ -304,13 +321,16 @@ for index, key in enumerate(("primary_window", "secondary_window")):
         if isinstance(reset_at, (int, float)) and not isinstance(reset_at, bool):
             reset5 = max(0, round((reset_at - time.time()) / 60))
 
-print(f"{p5} {p7} {reset5} {reset7} {days}")
+plan = j.get("plan_type")
+plan = re.sub(r"[^a-z0-9_.-]", "", plan.lower())[:24] if isinstance(plan, str) else ""
+shown = plan or "-"    # keep apostrophes out: this block sits inside a bash quoted string
+print(f"{p5} {p7} {reset5} {reset7} {days} {shown}")
 # CODEX_PARSER_END
 ')
       case "$cparsed" in
         ''|-1\ -1\ *) cstate=stale ;;
         *) if cvalidated=$(cache_io write codex-usage "$cparsed $(date +%s)"); then
-             read -r CP5 CP7 CRESET CRESET7 CDAYS CSTAMP <<< "$cvalidated"
+             read -r CP5 CP7 CRESET CRESET7 CDAYS CPLAN CSTAMP <<< "$cvalidated"
              CAGE=0; cstate=ok
            else
              cstate=stale
@@ -323,7 +343,7 @@ print(f"{p5} {p7} {reset5} {reset7} {days}")
 fi
 
 if [ -z "${CP5:-}" ]; then
-  CP5=0; CP7=0; CRESET=-1; CRESET7=-1; CDAYS=7; CAGE=-1
+  CP5=0; CP7=0; CRESET=-1; CRESET7=-1; CDAYS=7; CPLAN=-; CAGE=-1
   [ "$cstate" = expired ] || cstate=none
 elif [ "$cstate" != ok ]; then
   CAGE=$(( $(date +%s) - ${CSTAMP:-0} ))
@@ -331,12 +351,12 @@ fi
 
 case "${1:-}" in
   --raw)
-    printf 'claude %s %s %s %s %s %s\n' "$P5" "$P7" "$RESET" "$RESET7" "$AGE" "$state"
-    printf 'codex %s %s %s %s %s %s %s\n' "$CP5" "$CP7" "$CRESET" "$CRESET7" "$CAGE" "$cstate" "$CDAYS"
+    printf 'claude %s %s %s %s %s %s 7 %s\n' "$P5" "$P7" "$RESET" "$RESET7" "$AGE" "$state" "${PLAN:--}"
+    printf 'codex %s %s %s %s %s %s %s %s\n' "$CP5" "$CP7" "$CRESET" "$CRESET7" "$CAGE" "$cstate" "$CDAYS" "${CPLAN:--}"
     ;;
   *)
-    printf 'Claude: 5h %s%%  7d %s%% (%s)\n' "$P5" "$P7" "$state"
-    printf 'Codex:  5h %s%%  7d %s%% (%s)\n' "$CP5" "$CP7" "$cstate"
+    printf 'Claude [%s]: 5h %s%%  7d %s%% (%s)\n' "${PLAN:--}" "$P5" "$P7" "$state"
+    printf 'Codex  [%s]: 5h %s%%  %sd %s%% (%s)\n' "${CPLAN:--}" "$CP5" "$CDAYS" "$CP7" "$cstate"
     ;;
 esac
 
