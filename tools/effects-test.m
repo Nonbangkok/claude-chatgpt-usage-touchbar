@@ -90,6 +90,14 @@ int main(void) {
         for (int i = 0; i < 12; i++) FXHopAdvance(&coarse, 0.25);
         Check(settled15 && fabs(coarse.squash - 1) < 0.02, @"the squash settles even at 15 fps or after a stall");
 
+        FXHop frantic; FXHopInit(&frantic);
+        double highest = 0;
+        for (int tap = 0; tap < 30; tap++) {
+            FXHopKick(&frantic, 48);
+            for (int i = 0; i < 6; i++) { FXHopAdvance(&frantic, 1.0 / 60); highest = fmax(highest, frantic.y); }
+        }
+        Check(highest <= 7.0 + 1e-9, @"tapping mid-air cannot stack hops above the ceiling");
+
         double v = 0;
         for (int i = 0; i < 120; i++) v = FXApproach(v, 73, 8, 1.0 / 60);
         Check(v == 73, @"a tween settles exactly on its target");

@@ -65,6 +65,10 @@ static void PaintFace(unsigned char *g, GPTFace face) {
             Put(g, 6, 10, 3); Put(g, 6, 11, 3); Put(g, 7, 10, 3); Put(g, 7, 11, 3);
             Put(g, 9, 9, 3);
             break;
+        case GPTFaceDizzy:                       // x x
+            Put(g, 6, 6, 3); Put(g, 6, 8, 3); Put(g, 7, 7, 3); Put(g, 8, 6, 3); Put(g, 8, 8, 3);
+            Put(g, 6, 10, 3); Put(g, 6, 12, 3); Put(g, 7, 11, 3); Put(g, 8, 10, 3); Put(g, 8, 12, 3);
+            break;
         case GPTFaceSleepy:                      // half-closed, dimmer
             Put(g, 7, 7, 4); Put(g, 7, 8, 4); Put(g, 7, 10, 4); Put(g, 7, 11, 4);
             break;

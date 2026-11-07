@@ -25,7 +25,10 @@ web-chat message caps or API billing usage.
 
 Everything answers a fingertip. Tap a mascot and it crouches, hops and throws
 pixel confetti in its own colour with a ground shock-ring and a heart; tap
-again quickly to chain a combo (`×2`, `×3`…) that flips it like a coin. Throws
+again quickly to chain a combo (`×2`, `×3`…) that flips it like a coin; `×5`
+throws a party of confetti in every colour and gets Clawd dancing, and `×8`
+leaves the mascot dizzy for a moment, stars circling its head, until it has
+had a breather. Throws
 kick up dust and bounce off the wall with stars, and the two bump with a
 twinkle when they collide. Touching a bar makes both mascots glance over at
 what you are reading. Readings count up when they arrive and glide when they

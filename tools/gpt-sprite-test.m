@@ -49,7 +49,7 @@ int main(void) {
             }
         Check(symmetric, @"the body is left-right symmetric about column 9");
 
-        for (GPTFace f = GPTFaceNormal; f <= GPTFaceLook; f++) {
+        for (GPTFace f = GPTFaceNormal; f <= GPTFaceDizzy; f++) {
             GPTSpriteFrame(f, -1, other);
             BOOL onlyFace = YES;
             for (int r = 0; r < GPT_N; r++)

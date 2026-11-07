@@ -183,6 +183,7 @@ static NSColor *ProviderAccent(NSString *provider, BOOL lens) {
 @property (nonatomic) CGFloat claudeSpin, gptSpin;     // 0..1 coin-flip progress on a combo
 @property (nonatomic) CGFloat claudeBadgeT, gptBadgeT; // "×3" combo badge
 @property (nonatomic) int claudeBadgeN, gptBadgeN;
+@property (nonatomic) CGFloat claudeDizzyT, gptDizzyT;   // tapped silly: stars orbit, no more hops
 - (void)advanceFX:(double)dt;
 - (void)tapMascot:(MascotTarget)target;
 @end
@@ -571,9 +572,17 @@ static void AccentRGB(MascotTarget who, float *r, float *g, float *b) {
     if (target == MascotTargetNone) return;
     BOOL gpt = target == MascotTargetGPT;
     FXHop *hop = gpt ? &_gptHop : &_claudeHop;
-    int combo = FXHopKick(hop, 48);
     CGFloat x = gpt ? self.gptX : self.x;
     float r, g, b; AccentRGB(target, &r, &g, &b);
+    // Tapped silly: it needs a breather. A poke only shakes loose a sweat
+    // drop until the stars clear; the combo starts over afterwards.
+    if ((gpt ? self.gptDizzyT : self.claudeDizzyT) > 0) {
+        FXBurst(_fx, x + (FXRandom(_fx) < 0.5 ? -8 : 8), 24, 1, 10, 20, M_PI * 0.3, M_PI * 0.7,
+                0.5, 2.0, 90, 0.42f, 0.72f, 0.96f, FXKindPixel);
+        self.needsDisplay = YES;
+        return;
+    }
+    int combo = FXHopKick(hop, 48);
     int extra = MIN(combo - 1, 4);
 
     // Two fountains from the shoulders, so the confetti frames the face
@@ -596,11 +605,37 @@ static void AccentRGB(MascotTarget who, float *r, float *g, float *b) {
     FXEmit(_fx, heart);
 
     if (gpt) { self.gptHappyT = 1.2 + 0.3 * extra; self.gptRestT = 0; }
+    // x5: a party. Confetti in every colour, both mascots hop, Clawd breaks
+    // into a dance and GPT grins for a good while.
+    if (combo == 5) {
+        static const float party[6][3] = {{1,0.35,0.4},{1,0.8,0.3},{0.4,0.9,0.5},{0.4,0.7,1},{0.8,0.5,1},{1,1,1}};
+        for (int i = 0; i < 6; i++)
+            FXBurst(_fx, x, 18, 7, 40, 110, M_PI * 0.1, M_PI * 0.9, 1.1, 2.0, 110,
+                    party[i][0], party[i][1], party[i][2], FXKindPixel);
+        FXParticle big = { .x = x, .y = 1.2, .life = 0.7, .maxLife = 0.7, .size = 34,
+                           .r = 1, .g = 1, .b = 1, .kind = FXKindRing };
+        FXEmit(_fx, big);
+        if (!FXHopIsActive(gpt ? &_claudeHop : &_gptHop)) FXHopKick(gpt ? &_claudeHop : &_gptHop, 44);
+        if (!self.dragging && self.act != ActJuggle) {
+            self.act = ActClip; self.clipIdx = 6;            // dance_bounce
+            self.clip = 0; self.clipT = 0; self.clipLoops = 2;
+        }
+        self.gptHappyT = MAX(self.gptHappyT, 2.5);
+    }
+    // x8: dizzy. Stars orbit the head for a few seconds, no more hops, and
+    // the combo has to start again from one.
+    if (combo >= 8) {
+        if (gpt) self.gptDizzyT = 2.6; else self.claudeDizzyT = 2.6;
+        hop->combo = 0; hop->comboTimer = 0;
+        FXBurst(_fx, x, 22, 10, 30, 80, 0, M_PI * 2, 0.8, 3.0, 20, 1.0f, 0.92f, 0.45f, FXKindStar);
+    }
     if (combo >= 2) {
         if (gpt) { self.gptBadgeT = 0.8; self.gptBadgeN = combo; }
         else     { self.claudeBadgeT = 0.8; self.claudeBadgeN = combo; }
     }
-    if (combo >= 3) {
+    // One flip at a time: restarting it on every tap left the sprite edge-on
+    // (zero width) for as long as the tapping went on.
+    if (combo >= 3 && (gpt ? self.gptSpin : self.claudeSpin) <= 0) {
         if (gpt) self.gptSpin = 1.0; else self.claudeSpin = 1.0;
         FXBurst(_fx, x + 12, 22, 3 + extra, 30, 70, -M_PI * 0.2, M_PI * 0.45, 0.6, 3.2, 20, 1.0f, 0.92f, 0.45f, FXKindStar);
         FXBurst(_fx, x - 12, 22, 3 + extra, 30, 70, M_PI * 0.55, M_PI * 1.2, 0.6, 3.2, 20, 1.0f, 0.92f, 0.45f, FXKindStar);
@@ -633,6 +668,9 @@ static void AccentRGB(MascotTarget who, float *r, float *g, float *b) {
     self.gptSpin = MAX(0, self.gptSpin - dt / 0.5);
     self.claudeBadgeT = MAX(0, self.claudeBadgeT - dt);
     self.gptBadgeT = MAX(0, self.gptBadgeT - dt);
+    self.claudeDizzyT = MAX(0, self.claudeDizzyT - dt);
+    self.gptDizzyT = MAX(0, self.gptDizzyT - dt);
+    active |= self.claudeDizzyT > 0 || self.gptDizzyT > 0;
     active |= self.claudeSpin > 0 || self.gptSpin > 0 || self.claudeBadgeT > 0 ||
               self.gptBadgeT > 0;
 
@@ -742,6 +780,21 @@ static void DrawComboBadge(CGFloat x, CGFloat t, int n, NSColor *color) {
                           NSShadowAttributeName: glow };
     NSString *s = [NSString stringWithFormat:@"×%d", n];
     [s drawAtPoint:NSMakePoint(x + 9, 14 + prog * 6) withAttributes:at];
+}
+
+// Three little stars circling above a dizzy head, with a slight sway.
+static void DrawDizzyStars(CGFloat x, CGFloat t, double clock) {
+    if (t <= 0) return;
+    CGFloat fade = MIN(1, t * 2.5);
+    for (int i = 0; i < 3; i++) {
+        CGFloat ang = clock * 5.0 + i * (2 * M_PI / 3);
+        CGFloat sx = x + cos(ang) * 10.0, sy = 25.5 + sin(ang) * 2.2;
+        CGFloat depth = 0.6 + 0.4 * (sin(ang) + 1) / 2;         // the far side is dimmer
+        [[NSColor colorWithSRGBRed:1.0 green:0.92 blue:0.45 alpha:fade * depth] set];
+        CGFloat a = 2.2 * depth;
+        NSRectFill(NSMakeRect(sx - a, sy - 0.45, 2 * a, 0.9));
+        NSRectFill(NSMakeRect(sx - 0.45, sy - a, 0.9, 2 * a));
+    }
 }
 
 #pragma mark - Sprite
@@ -985,6 +1038,7 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, GPTFace face, int step, 
         BOOL moving = !self.gptActivity.resting || fabs(self.gptKick) > 1.0;
         GPTFace face = GPTFaceNormal;
         if (held || fabs(self.gptKick) > 40)      face = GPTFaceSurprised;
+        else if (self.gptDizzyT > 0)              face = GPTFaceDizzy;
         else if (self.gptHappyT > 0)              face = GPTFaceHappy;
         else if (self.gptBlinkT > 0)              face = GPTFaceBlink;
         else if (self.resetLookTime > 0)          face = GPTFaceLook;
@@ -994,7 +1048,8 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, GPTFace face, int step, 
         CGFloat gbob = moving ? ((((int)(self.gptPhase * 2.0)) & 1) ? 0.7 : 0)
                               : ((((int)(self.gptPhase * 0.6)) & 1) ? 0.5 : 0);
         if (held) gbob = sin(self.wiggleT * 15.0) * 1.2;
-        DrawGPTMascot(self.gptX, self.resetLookTime > 0 ? 1 : self.gptDir, face, step, gbob,
+        CGFloat sway = self.gptDizzyT > 0 ? sin(self.fxClock * 9.0) * 1.1 : 0;
+        DrawGPTMascot(self.gptX + sway, self.resetLookTime > 0 ? 1 : self.gptDir, face, step, gbob,
                       _gptHop.y, _gptHop.squash, self.gptSpin);
     }
 
@@ -1017,7 +1072,8 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, GPTFace face, int step, 
         // Clawd nearly fills the 30pt bar: limit the drawn lift so his head
         // never leaves it; the squash, flip and confetti carry the jump.
         CGFloat lift = MIN(_claudeHop.y, MAX(0, 30.8 - 2.2 - CLAWD_ROWS * 1.72 * sq));
-        [xf translateXBy:self.x yBy:2.2 + lift];
+        CGFloat sway = self.claudeDizzyT > 0 ? sin(self.fxClock * 9.0) * 1.1 : 0;
+        [xf translateXBy:self.x + sway yBy:2.2 + lift];
         [xf scaleXBy:cos(self.claudeSpin * 2 * M_PI) / sq yBy:sq];
         [xf translateXBy:-self.x yBy:-2.2];
         [xf concat];
@@ -1085,6 +1141,8 @@ static void DrawGPTMascot(CGFloat x, CGFloat direction, GPTFace face, int step, 
 
     [self drawReadout];
 
+    DrawDizzyStars(self.x, self.claudeDizzyT, self.fxClock);
+    DrawDizzyStars(self.gptX, self.gptDizzyT, self.fxClock);
     DrawComboBadge(self.x, self.claudeBadgeT, self.claudeBadgeN,
                    [NSColor colorWithSRGBRed:1.0 green:0.60 blue:0.42 alpha:1]);
     DrawComboBadge(self.gptX, self.gptBadgeT, self.gptBadgeN,
@@ -2146,6 +2204,8 @@ static int RenderFilmFX(NSString *dir) {
         if (i == (int)(5.5 * fps)) { v.x = v.gptX - 40; v.dir = 1; v.gptDir = -1; }
         if (i == (int)(7.0 * fps)) { v.throwVX = 260; v.act = ActWalk; }
         if (i == (int)(9.0 * fps)) { v.codexP7 = 12; v.p5 = 92; }
+        // Frantic tapping: eight taps in a second -> party at x5, dizzy at x8.
+        for (int k = 0; k < 10; k++) if (i == (int)((9.6 + k * 0.13) * fps)) [v tapMascot:MascotTargetGPT];
         [v advanceLens:1.0 / fps];
         [v advanceFX:1.0 / fps];
         if (i % 4 == 0) [v advance:1.0 / kFPS];

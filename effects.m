@@ -63,6 +63,7 @@ int FXAdvance(FXSystem *system, double dt) {
 
 static const double kHopGravity = 420.0;     // pt/s^2 — snappy at 30pt tall
 static const double kComboWindow = 0.7;      // seconds between taps to chain
+static const double kHopCeiling = 7.0;       // pt; the bar is 30pt and the sprites ~26
 
 void FXHopInit(FXHop *hop) {
     *hop = (FXHop){0};
@@ -95,6 +96,9 @@ BOOL FXHopAdvance(FXHop *hop, double dt) {
         if (airborne) {
             hop->vy -= kHopGravity * h;
             hop->y += hop->vy * h;
+            // Tapping again mid-air relaunches from where it is; a ceiling
+            // keeps a frantic tapper from stacking hops out of the bar.
+            if (hop->y > kHopCeiling) { hop->y = kHopCeiling; hop->vy = fmin(hop->vy, 0); }
             if (hop->y <= 0 && hop->vy < 0) {
                 double impact = fabs(hop->vy);
                 hop->y = 0; hop->vy = 0;

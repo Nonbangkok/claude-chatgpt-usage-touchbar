@@ -20,6 +20,7 @@ typedef NS_ENUM(NSInteger, GPTFace) {
     GPTFaceSurprised,   // o o  (grabbed)
     GPTFaceSleepy,      // half-closed, dim (long rest)
     GPTFaceLook,        // glance to the side (toward the readout)
+    GPTFaceDizzy,       // x x  (tapped silly)
 };
 
 // Fills out[GPT_N*GPT_N], rows top-down, facing right. step is a walk phase
